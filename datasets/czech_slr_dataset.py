@@ -119,7 +119,8 @@ class CzechSLRDataset(torch_data.Dataset):
     labels: [np.ndarray]
 
     def __init__(self, dataset_filename: str, num_labels=5, transform=None, augmentations=False,
-                 augmentations_prob=0.5, normalize=True, num_remove=0, remove_from=None):
+                 augmentations_prob=0.5, normalize=True, num_remove=0, remove_from=None,
+                 temporal_aug_config=None):
         """
         Initiates the HPOESDataset with the pre-loaded data from the h5 file.
 
@@ -139,6 +140,12 @@ class CzechSLRDataset(torch_data.Dataset):
         self.augmentations = augmentations
         self.augmentations_prob = augmentations_prob
         self.normalize = normalize
+        
+        # Temporal augmentation
+        self.temporal_aug_config = temporal_aug_config
+        self.temporal_augmenter = None
+        if temporal_aug_config is not None:
+            self.temporal_augmenter = HybridTemporalAugmentation(**temporal_aug_config)
 
     def __getitem__(self, idx):
         """
@@ -189,21 +196,23 @@ class CzechSLRDataset(torch_data.Dataset):
             l_hand_depth_map = self.transform(l_hand_depth_map)  # (B, 204, 21, 2)
             r_hand_depth_map = self.transform(r_hand_depth_map)  # (B, 204, 21, 2)
             body_depth_map = self.transform(body_depth_map)  # (B, 204, 12, 2)
-
-        # print(f"body_depth_map.shape {body_depth_map.shape}")
-        # print(f"l_hand_depth_map.shape {l_hand_depth_map.shape}")
-        # print(f"r_hand_depth_map.shape {r_hand_depth_map.shape}")
-
-        # print("All ok now")
-        # print(error)
-        #
-        # depth_map = dictionary_to_tensor(depth_map, HAND_IDENTIFIERS+BODY_IDENTIFIERS)
-        #
-        # # Move the landmark position interval to improve performance
-        # depth_map = depth_map - 0.5
-        #
-        # if self.transform:
-        #     depth_map = self.transform(depth_map)
+        
+        # Apply temporal augmentations if enabled (only during training)
+        if self.temporal_augmenter is not None:
+            # Convert to numpy for augmentation
+            l_hand_np = l_hand_depth_map.numpy()
+            r_hand_np = r_hand_depth_map.numpy()
+            body_np = body_depth_map.numpy()
+            
+            # Apply temporal augmentation
+            l_hand_np = self.temporal_augmenter(l_hand_np)
+            r_hand_np = self.temporal_augmenter(r_hand_np)
+            body_np = self.temporal_augmenter(body_np)
+            
+            # Convert back to tensors
+            l_hand_depth_map = torch.from_numpy(l_hand_np).float()
+            r_hand_depth_map = torch.from_numpy(r_hand_np).float()
+            body_depth_map = torch.from_numpy(body_np).float()
 
         return l_hand_depth_map, r_hand_depth_map, body_depth_map, label
 

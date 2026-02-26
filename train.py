@@ -101,6 +101,21 @@ def get_default_args():
                         help="Direction of cross-modal attention: body_to_hands (body learns from hands), "
                              "hands_to_body (hands learn from body), hands_bidirectional (only hand interaction), "
                              "bidirectional (full bi-directional, more parameters)")
+    
+    # Temporal Augmentation settings (for reducing overfitting)
+    parser.add_argument("--use_temporal_aug", type=bool, default=False,
+                        help="Enable temporal masking and keypoint dropout augmentation")
+    parser.add_argument("--temporal_mask_prob", type=float, default=0.3,
+                        help="Probability of applying temporal frame masking (default: 0.3)")
+    parser.add_argument("--keypoint_dropout_prob", type=float, default=0.3,
+                        help="Probability of applying keypoint dropout (default: 0.3)")
+    parser.add_argument("--mask_ratio", type=float, default=0.15,
+                        help="Ratio of frames to mask during temporal masking (default: 0.15)")
+    parser.add_argument("--dropout_type", type=str, default="random",
+                        choices=['random', 'bodypart'],
+                        help="Type of keypoint dropout: random keypoints or entire body parts")
+    parser.add_argument("--max_keypoints_drop", type=int, default=5,
+                        help="Maximum number of keypoints to drop in random mode (default: 5)")
 
     return parser
 
@@ -161,7 +176,30 @@ def train(args):
 
     # Training set
     transform = transforms.Compose([GaussianNoise(args.gaussian_mean, args.gaussian_std)])
-    train_set = CzechSLRDataset(args.training_set_path, transform=transform, augmentations=True)
+    
+    # Temporal augmentation config
+    temporal_aug_config = None
+    if args.use_temporal_aug:
+        temporal_aug_config = {
+            'temporal_mask_prob': args.temporal_mask_prob,
+            'keypoint_dropout_prob': args.keypoint_dropout_prob,
+            'sequential_cutout_prob': 0.2,  # Fixed value
+            'mask_ratio': args.mask_ratio,
+            'dropout_prob': args.keypoint_dropout_prob,
+            'dropout_type': args.dropout_type,
+            'max_keypoints': args.max_keypoints_drop
+        }
+        print(f"\n{'='*60}")
+        print(f"TEMPORAL AUGMENTATION ENABLED:")
+        print(f"  - Temporal Mask Prob: {args.temporal_mask_prob}")
+        print(f"  - Mask Ratio: {args.mask_ratio}")
+        print(f"  - Keypoint Dropout Prob: {args.keypoint_dropout_prob}")
+        print(f"  - Dropout Type: {args.dropout_type}")
+        print(f"  - Max Keypoints Drop: {args.max_keypoints_drop}")
+        print(f"{'='*60}\n")
+    
+    train_set = CzechSLRDataset(args.training_set_path, transform=transform, augmentations=True,
+                                temporal_aug_config=temporal_aug_config)
 
     # Validation set
     if args.validation_set == "from-file":
