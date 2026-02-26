@@ -3,6 +3,7 @@ import argparse
 import random
 import logging
 import torch
+import copy
 
 import numpy as np
 import torch.nn as nn
@@ -57,6 +58,16 @@ def get_default_args():
     parser.add_argument("--lr", type=float, default=0.0001, help="Learning rate for the model training")
     parser.add_argument("--log_freq", type=int, default=1,
                         help="Log frequency (frequency of printing all the training info)")
+
+    # Self-distillation (EMA teacher) settings
+    parser.add_argument("--use_ema_distill", type=bool, default=True,
+                        help="Enable EMA self-distillation during training")
+    parser.add_argument("--distill_alpha", type=float, default=0.5,
+                        help="Weight for distillation loss (0-1)")
+    parser.add_argument("--distill_temp", type=float, default=2.0,
+                        help="Temperature for distillation soft targets")
+    parser.add_argument("--ema_decay", type=float, default=0.999,
+                        help="EMA decay for teacher updates")
 
     # Checkpointing
     parser.add_argument("--save_checkpoints", type=bool, default=True,
@@ -148,6 +159,14 @@ def train(args):
     slr_model.train(True)
     slr_model.to(device)
 
+    ema_model = None
+    if args.use_ema_distill:
+        ema_model = copy.deepcopy(slr_model)
+        ema_model.eval()
+        for param in ema_model.parameters():
+            param.requires_grad_(False)
+        print("EMA self-distillation is enabled")
+
     # Construct the other modules
     cel_criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.AdamW(slr_model.parameters(), lr=args.lr, betas=(0.9, 0.999), weight_decay=1e-8)
@@ -223,8 +242,18 @@ def train(args):
     avg_train_time_sec_list = []
     for epoch in range(args.epochs):
         start_time = time.time()
-        train_loss, _, _, train_acc, avg_train_time = train_epoch(slr_model, train_loader, cel_criterion, optimizer,
-                                                                  device, scheduler=scheduler)
+        train_loss, _, _, train_acc, avg_train_time = train_epoch(
+            slr_model,
+            train_loader,
+            cel_criterion,
+            optimizer,
+            device,
+            scheduler=scheduler,
+            ema_model=ema_model,
+            distill_alpha=args.distill_alpha,
+            distill_temp=args.distill_temp,
+            ema_decay=args.ema_decay
+        )
         end_time = time.time()
         train_time = end_time - start_time
 

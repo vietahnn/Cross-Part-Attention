@@ -8,7 +8,18 @@ import time
 from statistics import mean
 
 
-def train_epoch(model, dataloader, criterion, optimizer, device, scheduler=None):
+def train_epoch(
+    model,
+    dataloader,
+    criterion,
+    optimizer,
+    device,
+    scheduler=None,
+    ema_model=None,
+    distill_alpha=0.5,
+    distill_temp=2.0,
+    ema_decay=0.999
+):
     pred_correct, pred_all = 0, 0
     running_loss = 0.0
     train_time_sec_list = []
@@ -23,15 +34,34 @@ def train_epoch(model, dataloader, criterion, optimizer, device, scheduler=None)
         start_time = time.time()
 
         outputs = model(l_hands, r_hands, bodies, training=True)
+        ema_outputs = None
+        if ema_model is not None:
+            with torch.no_grad():
+                ema_outputs = ema_model(l_hands, r_hands, bodies, training=False)
 
         end_time = time.time()
         train_time_sec = end_time - start_time
         train_time_sec_list.append(train_time_sec)
 
-        loss = criterion(outputs, labels.squeeze(1))
+        ce_loss = criterion(outputs, labels.squeeze(1))
+        if ema_outputs is not None:
+            student_log_probs = F.log_softmax(outputs / distill_temp, dim=1)
+            teacher_probs = F.softmax(ema_outputs / distill_temp, dim=1)
+            distill_loss = F.kl_div(student_log_probs, teacher_probs, reduction="batchmean")
+            distill_loss = distill_loss * (distill_temp ** 2)
+            loss = (1 - distill_alpha) * ce_loss + distill_alpha * distill_loss
+        else:
+            loss = ce_loss
         loss.backward()
         optimizer.step()
         running_loss += loss
+
+        if ema_model is not None:
+            with torch.no_grad():
+                for ema_param, param in zip(ema_model.parameters(), model.parameters()):
+                    ema_param.data.mul_(ema_decay).add_(param.data, alpha=1 - ema_decay)
+                for ema_buf, buf in zip(ema_model.buffers(), model.buffers()):
+                    ema_buf.copy_(buf)
 
         # Statistics
         _, preds = torch.max(F.softmax(outputs, dim=1), 1)
