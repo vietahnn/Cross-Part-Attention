@@ -59,6 +59,18 @@ def get_default_args():
     parser.add_argument("--log_freq", type=int, default=1,
                         help="Log frequency (frequency of printing all the training info)")
 
+    # Temporal-invariance regularization settings
+    parser.add_argument("--use_temporal_invariance", type=bool, default=True,
+                        help="Enable temporal-invariance regularization")
+    parser.add_argument("--temporal_weight", type=float, default=0.5,
+                        help="Weight for temporal-invariance loss")
+    parser.add_argument("--temporal_temp", type=float, default=2.0,
+                        help="Temperature for temporal-invariance loss")
+    parser.add_argument("--temporal_min_ratio", type=float, default=0.7,
+                        help="Minimum crop ratio for temporal invariance")
+    parser.add_argument("--temporal_max_ratio", type=float, default=1.0,
+                        help="Maximum crop ratio for temporal invariance")
+
     # Checkpointing
     parser.add_argument("--save_checkpoints", type=bool, default=True,
                         help="Determines whether to save weights checkpoints")
@@ -224,8 +236,19 @@ def train(args):
     avg_train_time_sec_list = []
     for epoch in range(args.epochs):
         start_time = time.time()
-        train_loss, _, _, train_acc, avg_train_time = train_epoch(slr_model, train_loader, cel_criterion, optimizer,
-                                                                  device, scheduler=scheduler)
+        train_loss, _, _, train_acc, avg_train_time = train_epoch(
+            slr_model,
+            train_loader,
+            cel_criterion,
+            optimizer,
+            device,
+            scheduler=scheduler,
+            use_temporal_invariance=args.use_temporal_invariance,
+            temporal_weight=args.temporal_weight,
+            temporal_temp=args.temporal_temp,
+            temporal_min_ratio=args.temporal_min_ratio,
+            temporal_max_ratio=args.temporal_max_ratio
+        )
         end_time = time.time()
         train_time = end_time - start_time
 
