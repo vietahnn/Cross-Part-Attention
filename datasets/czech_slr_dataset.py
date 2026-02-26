@@ -16,6 +16,35 @@ ORI_HAND_IDENTIFIERS = HAND_IDENTIFIERS
 HAND_IDENTIFIERS = [id + "_0" for id in HAND_IDENTIFIERS] + [id + "_1" for id in HAND_IDENTIFIERS]
 
 
+def crop_or_pad_to_length(tensor, target_length=204):
+    """
+    Crop or pad a tensor to a target sequence length.
+    Used to ensure consistent sequence length after RandomSpeed augmentation.
+    
+    Args:
+        tensor: Input tensor of shape (seq_len, num_keypoints, 2)
+        target_length: Target sequence length (default: 204 for Siformer)
+    
+    Returns:
+        Tensor of shape (target_length, num_keypoints, 2)
+    """
+    current_length = tensor.shape[0]
+    
+    if current_length == target_length:
+        # Already correct length
+        return tensor
+    elif current_length > target_length:
+        # Crop: take first target_length frames
+        return tensor[:target_length, :, :]
+    else:
+        # Pad: add zeros at the end
+        pad_length = target_length - current_length
+        # Pad shape: (pad_left, pad_right, pad_top, pad_bottom, pad_front, pad_back)
+        # For shape (seq_len, num_keypoints, 2), pad the first dimension
+        padded = torch.nn.functional.pad(tensor, (0, 0, 0, 0, 0, pad_length), mode='constant', value=0)
+        return padded
+
+
 def remove_data(df, num_remove, remove_from):
     length = len(ast.literal_eval(df["indexDIP_left_X"][0]))
 
