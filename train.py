@@ -105,6 +105,14 @@ def get_default_args():
     # Hybrid Normalization settings (Approach 4: Augmented Features)
     parser.add_argument("--use_position", type=bool, default=True,
                         help="Determines whether to augment hand features with position information (relative to body)")
+    
+    # Normalization V2 settings (Semi-Isolated Normalization)
+    parser.add_argument("--use_normalize_v2", type=bool, default=False,
+                        help="Determines whether to use semi-isolated normalization (V2) - "
+                             "converts hand coordinates to be relative to body reference point before normalization")
+    parser.add_argument("--body_ref_key", type=str, default="neck",
+                        choices=['neck', 'nose', 'leftShoulder', 'rightShoulder'],
+                        help="Body reference point for V2 normalization (default: neck)")
 
     return parser
 
@@ -167,11 +175,15 @@ def train(args):
     # Training set
     transform = transforms.Compose([GaussianNoise(args.gaussian_mean, args.gaussian_std)])
     train_set = CzechSLRDataset(args.training_set_path, transform=transform, augmentations=True, 
-                                use_position=args.use_position)
+                                use_position=args.use_position,
+                                use_normalize_v2=args.use_normalize_v2,
+                                body_ref_key=args.body_ref_key)
 
     # Validation set
     if args.validation_set == "from-file":
-        val_set = CzechSLRDataset(args.validation_set_path, use_position=args.use_position)
+        val_set = CzechSLRDataset(args.validation_set_path, use_position=args.use_position,
+                                  use_normalize_v2=args.use_normalize_v2,
+                                  body_ref_key=args.body_ref_key)
         val_loader = DataLoader(val_set, batch_size=args.batch_size, shuffle=True, generator=g,
                                 num_workers=args.num_worker)
 
@@ -188,7 +200,9 @@ def train(args):
 
     # Testing set
     if args.testing_set_path:
-        eval_set = CzechSLRDataset(args.testing_set_path, use_position=args.use_position)
+        eval_set = CzechSLRDataset(args.testing_set_path, use_position=args.use_position,
+                                   use_normalize_v2=args.use_normalize_v2,
+                                   body_ref_key=args.body_ref_key)
         eval_loader = DataLoader(eval_set, batch_size=args.batch_size, shuffle=True, generator=g,
                                  num_workers=args.num_worker)
 

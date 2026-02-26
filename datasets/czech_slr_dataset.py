@@ -10,6 +10,7 @@ from normalization.body_normalization import BODY_IDENTIFIERS
 from normalization.hand_normalization import HAND_IDENTIFIERS
 from normalization.body_normalization import normalize_single_dict as normalize_single_body_dict
 from normalization.hand_normalization import normalize_single_dict as normalize_single_hand_dict
+from normalization.hand_normalization import normalize_single_dict_v2 as normalize_single_hand_dict_v2
 
 ORI_HAND_IDENTIFIERS = HAND_IDENTIFIERS
 HAND_IDENTIFIERS = [id + "_0" for id in HAND_IDENTIFIERS] + [id + "_1" for id in HAND_IDENTIFIERS]
@@ -196,13 +197,16 @@ class CzechSLRDataset(torch_data.Dataset):
     labels: [np.ndarray]
 
     def __init__(self, dataset_filename: str, num_labels=5, transform=None, augmentations=False,
-                 augmentations_prob=0.5, normalize=True, num_remove=0, remove_from=None, use_position=True):
+                 augmentations_prob=0.5, normalize=True, num_remove=0, remove_from=None, use_position=True,
+                 use_normalize_v2=False, body_ref_key="neck"):
         """
         Initiates the HPOESDataset with the pre-loaded data from the h5 file.
 
         :param dataset_filename: Path to the h5 file
         :param transform: Any data transformation to be applied (default: None)
         :param use_position: Whether to augment hand data with position features (default: True)
+        :param use_normalize_v2: Whether to use semi-isolated normalization v2 (relative to body ref point) (default: False)
+        :param body_ref_key: Body reference point for v2 normalization (default: "neck")
         """
 
         loaded_data = load_dataset(file_location=dataset_filename, num_remove=num_remove, remove_from=remove_from)
@@ -218,12 +222,19 @@ class CzechSLRDataset(torch_data.Dataset):
         self.augmentations_prob = augmentations_prob
         self.normalize = normalize
         self.use_position = use_position
+        self.use_normalize_v2 = use_normalize_v2
+        self.body_ref_key = body_ref_key
         
         if self.use_position:
             print("using right")
             print(f"✓ CzechSLRDataset: Position features ENABLED (hands will have 4 channels: x, y, rel_x, rel_y)")
         else:
             print(f"  CzechSLRDataset: Position features DISABLED (hands will have 2 channels: x, y only)")
+        
+        if self.use_normalize_v2:
+            print(f"✓ CzechSLRDataset: Using NORMALIZE V2 (semi-isolated, relative to {body_ref_key})")
+        else:
+            print(f"  CzechSLRDataset: Using NORMALIZE V1 (standard bounding box)")
 
     def __getitem__(self, idx):
         """
@@ -260,7 +271,10 @@ class CzechSLRDataset(torch_data.Dataset):
 
         if self.normalize:
             depth_map = normalize_single_body_dict(depth_map)
-            depth_map = normalize_single_hand_dict(depth_map)
+            if self.use_normalize_v2:
+                depth_map = normalize_single_hand_dict_v2(depth_map, body_ref_key=self.body_ref_key)
+            else:
+                depth_map = normalize_single_hand_dict(depth_map)
 
         # Compute position features BEFORE isolating hands (need full depth_map for reference points)
         if self.use_position:

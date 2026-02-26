@@ -185,6 +185,131 @@ def normalize_single_dict(row: dict):
     return row
 
 
+def normalize_single_dict_v2(row: dict, body_ref_key: str = "neck"):
+    """
+    Normalizes hand landmarks using semi-isolated normalization (v2).
+    This method first converts hand coordinates to be relative to a body reference point,
+    then normalizes them within the hand's bounding box.
+    
+    Key differences from v1:
+    - Uses relative position to body reference point before normalization
+    - Better captures spatial relationship between hands and body
+    - Adapted from Teledeaf's normalize_hand_v2 for 2D coordinates
+    
+    :param row: Dictionary containing key-value pairs with joint identifiers and corresponding 
+                lists (sequences) of that particular joints coordinates
+    :param body_ref_key: Key for the body reference point (default: "neck")
+    :return: Dictionary with normalized skeletal data (following the same schema as input data)
+    """
+    
+    hand_landmarks = {0: [], 1: []}
+    
+    # Determine how many hands are present in the dataset
+    range_hand_size = 1
+    if "wrist_1" in row.keys():
+        range_hand_size = 2
+    
+    # Construct the relevant identifiers
+    for identifier in HAND_IDENTIFIERS:
+        for hand_index in range(range_hand_size):
+            hand_landmarks[hand_index].append(identifier + "_" + str(hand_index))
+    
+    # Step 1: Convert to relative coordinates if body reference point exists
+    if body_ref_key in row.keys():
+        sequence_size = len(row[body_ref_key])
+        
+        for hand_index in range(range_hand_size):
+            for sequence_index in range(sequence_size):
+                # Get reference point coordinates
+                ref_point = row[body_ref_key][sequence_index]
+                if not isinstance(ref_point, (list, tuple)) or len(ref_point) < 2:
+                    continue
+                
+                x0, y0 = ref_point[0], ref_point[1]
+                
+                # Skip if reference point is missing
+                if x0 == 0 and y0 == 0:
+                    continue
+                
+                # Convert all hand landmarks to relative coordinates
+                for identifier in HAND_IDENTIFIERS:
+                    key = identifier + "_" + str(hand_index)
+                    if key not in row or sequence_index >= len(row[key]):
+                        continue
+                    
+                    point = row[key][sequence_index]
+                    if not isinstance(point, (list, tuple)) or len(point) < 2:
+                        continue
+                    
+                    x, y = point[0], point[1]
+                    
+                    # Skip zero points (missing data)
+                    if x == 0 and y == 0:
+                        continue
+                    
+                    # Update to relative position
+                    row[key][sequence_index] = list(row[key][sequence_index])
+                    row[key][sequence_index][0] = x - x0
+                    row[key][sequence_index][1] = y - y0
+    
+    # Step 2: Normalize within hand's bounding box
+    for hand_index in range(range_hand_size):
+        wrist_key = "wrist_" + str(hand_index)
+        if wrist_key not in row.keys():
+            continue
+            
+        sequence_size = len(row[wrist_key])
+        
+        # Treat each element of the sequence (analyzed frame) individually
+        for sequence_index in range(sequence_size):
+            
+            # Retrieve all of the X and Y values of the current frame
+            landmarks_x_values = [row[key][sequence_index][0] for key in hand_landmarks[hand_index] if
+                                  row[key][sequence_index][0] != 0]
+            landmarks_y_values = [row[key][sequence_index][1] for key in hand_landmarks[hand_index] if
+                                  row[key][sequence_index][1] != 0]
+            
+            # Prevent from even starting the analysis if some necessary elements are not present
+            if not landmarks_x_values or not landmarks_y_values:
+                continue
+            
+            # Calculate the deltas with aspect ratio adjustment
+            width = max(landmarks_x_values) - min(landmarks_x_values)
+            height = max(landmarks_y_values) - min(landmarks_y_values)
+            
+            if width > height:
+                delta_x = 0.1 * width
+                delta_y = delta_x + ((width - height) / 2)
+            else:
+                delta_y = 0.1 * height
+                delta_x = delta_y + ((height - width) / 2)
+            
+            # Set the starting and ending point of the normalization bounding box
+            starting_point = (min(landmarks_x_values) - delta_x, min(landmarks_y_values) - delta_y)
+            ending_point = (max(landmarks_x_values) + delta_x, max(landmarks_y_values) + delta_y)
+            
+            # Normalize individual landmarks and save the results
+            for identifier in HAND_IDENTIFIERS:
+                key = identifier + "_" + str(hand_index)
+                
+                # Prevent from trying to normalize incorrectly captured points
+                if row[key][sequence_index][0] == 0 or (ending_point[0] - starting_point[0]) == 0 or (
+                        ending_point[1] - starting_point[1]) == 0:
+                    continue
+                
+                normalized_x = (row[key][sequence_index][0] - starting_point[0]) / (ending_point[0] -
+                                                                                       starting_point[0])
+                normalized_y = (row[key][sequence_index][1] - starting_point[1]) / (ending_point[1] -
+                                                                                     starting_point[1])
+                
+                row[key][sequence_index] = list(row[key][sequence_index])
+                
+                row[key][sequence_index][0] = normalized_x
+                row[key][sequence_index][1] = normalized_y
+    
+    return row
+
+
 if __name__ == "__main__":
     pass
 
