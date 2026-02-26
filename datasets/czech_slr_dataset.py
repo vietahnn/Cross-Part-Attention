@@ -234,5 +234,58 @@ class CzechSLRDataset(torch_data.Dataset):
         return len(self.labels)
 
 
+def pad_collate_fn(batch):
+    """
+    Custom collate function to pad sequences to the same length in a batch.
+    This is necessary when using RandomSpeed augmentation which changes sequence lengths.
+    
+    Args:
+        batch: List of tuples (l_hand, r_hand, body, label)
+               where each component has shape (seq_len, num_keypoints, 2)
+    
+    Returns:
+        Padded batch with all sequences having the same length (max_len in batch)
+    """
+    # Separate components
+    l_hands, r_hands, bodies, labels = zip(*batch)
+    
+    # Find maximum sequence length in this batch
+    max_len = max([l.shape[0] for l in l_hands])
+    
+    # Pad each component
+    l_hands_padded = []
+    r_hands_padded = []
+    bodies_padded = []
+    
+    for l_hand, r_hand, body in zip(l_hands, r_hands, bodies):
+        seq_len = l_hand.shape[0]
+        
+        if seq_len < max_len:
+            # Calculate padding needed
+            pad_len = max_len - seq_len
+            
+            # Pad with zeros: (pad_left, pad_right, pad_top, pad_bottom, pad_front, pad_back)
+            # For shape (seq_len, num_keypoints, 2), we pad the first dimension (seq_len)
+            l_hand_padded = torch.nn.functional.pad(l_hand, (0, 0, 0, 0, 0, pad_len), mode='constant', value=0)
+            r_hand_padded = torch.nn.functional.pad(r_hand, (0, 0, 0, 0, 0, pad_len), mode='constant', value=0)
+            body_padded = torch.nn.functional.pad(body, (0, 0, 0, 0, 0, pad_len), mode='constant', value=0)
+        else:
+            l_hand_padded = l_hand
+            r_hand_padded = r_hand
+            body_padded = body
+        
+        l_hands_padded.append(l_hand_padded)
+        r_hands_padded.append(r_hand_padded)
+        bodies_padded.append(body_padded)
+    
+    # Stack into batch
+    l_hands_batch = torch.stack(l_hands_padded)
+    r_hands_batch = torch.stack(r_hands_padded)
+    bodies_batch = torch.stack(bodies_padded)
+    labels_batch = torch.stack(labels)
+    
+    return l_hands_batch, r_hands_batch, bodies_batch, labels_batch
+
+
 if __name__ == "__main__":
     pass

@@ -14,7 +14,7 @@ from torch.utils.data import DataLoader
 from pathlib import Path
 
 from utils import __balance_val_split, __split_of_train_sequence, __log_class_statistics
-from datasets.czech_slr_dataset import CzechSLRDataset
+from datasets.czech_slr_dataset import CzechSLRDataset, pad_collate_fn
 from siformer.model import SiFormer, SpoTer
 from siformer.utils import train_epoch, evaluate, evaluate_top_k
 from siformer.gaussian_noise import GaussianNoise
@@ -197,7 +197,7 @@ def train(args):
                                  augmentations=False,  # No augmentation for validation
                                  use_random_speed=False)
         val_loader = DataLoader(val_set, batch_size=args.batch_size, shuffle=True, generator=g,
-                                num_workers=args.num_worker)
+                                num_workers=args.num_worker, collate_fn=pad_collate_fn)
 
     elif args.validation_set == "split-from-train":
         train_set, val_set = __balance_val_split(train_set, 0.2)
@@ -206,7 +206,7 @@ def train(args):
         val_set.augmentations = False
         val_set.use_random_speed = False  # Ensure no time warping for validation
         val_loader = DataLoader(val_set, batch_size=args.batch_size, shuffle=True, generator=g,
-                                num_workers=args.num_worker)
+                                num_workers=args.num_worker, collate_fn=pad_collate_fn)
 
     else:
         val_loader = None
@@ -217,7 +217,7 @@ def train(args):
                                    augmentations=False,  # No augmentation for testing
                                    use_random_speed=False)
         eval_loader = DataLoader(eval_set, batch_size=args.batch_size, shuffle=True, generator=g,
-                                 num_workers=args.num_worker)
+                                 num_workers=args.num_worker, collate_fn=pad_collate_fn)
 
     else:
         eval_loader = None
@@ -227,7 +227,7 @@ def train(args):
         train_set = __split_of_train_sequence(train_set, args.experimental_train_split)
 
     train_loader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True, generator=g,
-                              num_workers=args.num_worker)
+                              num_workers=args.num_worker, collate_fn=pad_collate_fn)
 
     # MARK: TRAINING
     train_acc, val_acc = 0, 0
