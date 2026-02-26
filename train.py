@@ -59,6 +59,14 @@ def get_default_args():
     parser.add_argument("--log_freq", type=int, default=1,
                         help="Log frequency (frequency of printing all the training info)")
 
+    # Cross-modal consistency settings
+    parser.add_argument("--use_cm_consistency", type=bool, default=True,
+                        help="Enable cross-modal consistency loss (hands/body vs full)")
+    parser.add_argument("--cm_weight", type=float, default=0.5,
+                        help="Weight for cross-modal consistency loss")
+    parser.add_argument("--cm_temp", type=float, default=2.0,
+                        help="Temperature for cross-modal consistency loss")
+
     # Checkpointing
     parser.add_argument("--save_checkpoints", type=bool, default=True,
                         help="Determines whether to save weights checkpoints")
@@ -224,8 +232,17 @@ def train(args):
     avg_train_time_sec_list = []
     for epoch in range(args.epochs):
         start_time = time.time()
-        train_loss, _, _, train_acc, avg_train_time = train_epoch(slr_model, train_loader, cel_criterion, optimizer,
-                                                                  device, scheduler=scheduler)
+        train_loss, _, _, train_acc, avg_train_time = train_epoch(
+            slr_model,
+            train_loader,
+            cel_criterion,
+            optimizer,
+            device,
+            scheduler=scheduler,
+            use_cm_consistency=args.use_cm_consistency,
+            cm_weight=args.cm_weight,
+            cm_temp=args.cm_temp
+        )
         end_time = time.time()
         train_time = end_time - start_time
 

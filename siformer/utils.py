@@ -8,7 +8,28 @@ import time
 from statistics import mean
 
 
-def train_epoch(model, dataloader, criterion, optimizer, device, scheduler=None):
+def cross_modal_consistency_loss(full_logits, hands_logits, body_logits, temperature=2.0):
+    target_probs = F.softmax(full_logits / temperature, dim=1).detach()
+    hands_log_probs = F.log_softmax(hands_logits / temperature, dim=1)
+    body_log_probs = F.log_softmax(body_logits / temperature, dim=1)
+
+    hands_kl = F.kl_div(hands_log_probs, target_probs, reduction="batchmean")
+    body_kl = F.kl_div(body_log_probs, target_probs, reduction="batchmean")
+
+    return (hands_kl + body_kl) * (temperature ** 2)
+
+
+def train_epoch(
+    model,
+    dataloader,
+    criterion,
+    optimizer,
+    device,
+    scheduler=None,
+    use_cm_consistency=True,
+    cm_weight=0.5,
+    cm_temp=2.0
+):
     pred_correct, pred_all = 0, 0
     running_loss = 0.0
     train_time_sec_list = []
@@ -23,12 +44,25 @@ def train_epoch(model, dataloader, criterion, optimizer, device, scheduler=None)
         start_time = time.time()
 
         outputs = model(l_hands, r_hands, bodies, training=True)
+        cm_loss = None
+        if use_cm_consistency:
+            zero_l = torch.zeros_like(l_hands)
+            zero_r = torch.zeros_like(r_hands)
+            zero_b = torch.zeros_like(bodies)
+
+            hands_logits = model(l_hands, r_hands, zero_b, training=True)
+            body_logits = model(zero_l, zero_r, bodies, training=True)
+            cm_loss = cross_modal_consistency_loss(outputs, hands_logits, body_logits, temperature=cm_temp)
 
         end_time = time.time()
         train_time_sec = end_time - start_time
         train_time_sec_list.append(train_time_sec)
 
-        loss = criterion(outputs, labels.squeeze(1))
+        ce_loss = criterion(outputs, labels.squeeze(1))
+        if cm_loss is not None:
+            loss = ce_loss + (cm_weight * cm_loss)
+        else:
+            loss = ce_loss
         loss.backward()
         optimizer.step()
         running_loss += loss
