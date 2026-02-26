@@ -59,6 +59,16 @@ def get_default_args():
     parser.add_argument("--log_freq", type=int, default=1,
                         help="Log frequency (frequency of printing all the training info)")
 
+    # Sequence-level contrastive learning settings
+    parser.add_argument("--use_contrastive", type=bool, default=True,
+                        help="Enable sequence-level supervised contrastive learning")
+    parser.add_argument("--contrastive_weight", type=float, default=0.5,
+                        help="Weight for contrastive loss")
+    parser.add_argument("--contrastive_temp", type=float, default=0.1,
+                        help="Temperature for contrastive loss")
+    parser.add_argument("--contrastive_noise_std", type=float, default=0.002,
+                        help="Noise std for contrastive views")
+
     # Checkpointing
     parser.add_argument("--save_checkpoints", type=bool, default=True,
                         help="Determines whether to save weights checkpoints")
@@ -224,8 +234,18 @@ def train(args):
     avg_train_time_sec_list = []
     for epoch in range(args.epochs):
         start_time = time.time()
-        train_loss, _, _, train_acc, avg_train_time = train_epoch(slr_model, train_loader, cel_criterion, optimizer,
-                                                                  device, scheduler=scheduler)
+        train_loss, _, _, train_acc, avg_train_time = train_epoch(
+            slr_model,
+            train_loader,
+            cel_criterion,
+            optimizer,
+            device,
+            scheduler=scheduler,
+            use_contrastive=args.use_contrastive,
+            contrastive_weight=args.contrastive_weight,
+            contrastive_temp=args.contrastive_temp,
+            contrastive_noise_std=args.contrastive_noise_std
+        )
         end_time = time.time()
         train_time = end_time - start_time
 
