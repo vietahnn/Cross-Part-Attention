@@ -131,3 +131,43 @@ def get_sequence_list(num):
         i += 1
 
     return sorted(result, reverse=True)
+
+def train_epoch_with_contrastive(model, dataloader, criterion, optimizer, device, contrastive_loss=None, scheduler=None):
+    pred_correct, pred_all = 0, 0
+    running_loss, running_ce_loss, running_con_loss, running_center_loss = 0.0, 0.0, 0.0, 0.0
+    train_time_sec_list = []
+    for i, data in enumerate(dataloader):
+        l_hands, r_hands, bodies, labels = data
+        l_hands, r_hands, bodies = l_hands.to(device), r_hands.to(device), bodies.to(device)
+        labels = labels.to(device, dtype=torch.long)
+        optimizer.zero_grad()
+        start_time = time.time()
+        if contrastive_loss is not None:
+            outputs, features = model(l_hands, r_hands, bodies, training=True, return_features=True)
+        else:
+            outputs = model(l_hands, r_hands, bodies, training=True)
+        end_time = time.time()
+        train_time_sec_list.append(end_time - start_time)
+        ce_loss = criterion(outputs, labels.squeeze(1))
+        total_loss = ce_loss
+        con_loss = torch.tensor(0.0).to(device)
+        center_loss = torch.tensor(0.0).to(device)
+        if contrastive_loss is not None:
+            aux_losses = contrastive_loss(features, labels.squeeze(1))
+            total_loss = ce_loss + aux_losses['total']
+            con_loss, center_loss = aux_losses['contrastive'], aux_losses['center']
+        total_loss.backward()
+        optimizer.step()
+        running_loss += total_loss.item()
+        running_ce_loss += ce_loss.item()
+        running_con_loss += con_loss.item() if isinstance(con_loss, torch.Tensor) else con_loss
+        running_center_loss += center_loss.item() if isinstance(center_loss, torch.Tensor) else center_loss
+        _, preds = torch.max(F.softmax(outputs, dim=1), 1)
+        pred_correct +torch.sum(preds == labels.view(-1)).item()
+        pred_all += labels.size(0)
+    if scheduler:
+        scheduler.step()
+    avg_train_time = mean(train_time_sec_list)
+    accuracy = pred_correct / pred_all
+    loss_dict = {'total': running_loss / len(dataloader), 'ce': running_ce_loss / len(dataloader), 'contrastive': running_con_loss / len(dataloader), 'center': running_center_loss / len(dataloader)}
+    return running_loss, pred_correct, pred_all, accuracy, avg_train_time, loss_dict

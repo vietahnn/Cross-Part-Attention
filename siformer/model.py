@@ -270,7 +270,7 @@ class SiFormer(nn.Module):
         print(f"num_enc_layers {num_enc_layers}, num_dec_layers {num_dec_layers}, patient {patience}, cross_attn {use_cross_attention}, direction {cross_attn_direction}")
         self.projection = nn.Linear(num_hid, num_classes)
 
-    def forward(self, l_hand, r_hand, body, training):
+    def forward(self, l_hand, r_hand, body, training, return_features=False):
         batch_size = l_hand.size(0)
         # (batch_size, seq_len, respected_feature_size, coordinates): (24, 204, 54, 2)
         # -> (batch_size, seq_len, feature_size):  (24, 204, 108)
@@ -297,8 +297,15 @@ class SiFormer(nn.Module):
         # print("transformer_output.shape")
         # print(transformer_output.shape)
 
+        # Extract features before projection (for contrastive/center loss)
+        # (batch_size, 1, feature_size) -> (batch_size, feature_size)
+        features = transformer_output.squeeze(1)
+
         # (batch_size, 1, feature_size) -> (batch_size, num_class): (24, 100)
         out = self.projection(transformer_output).squeeze()
+        
+        if return_features:
+            return out, features
         return out
 
     @staticmethod
