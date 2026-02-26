@@ -6,6 +6,7 @@ import torch.utils.data as torch_data
 
 from random import randrange
 from augmentations import *
+from augmentations.skeleton_augmentation import augment_random_rotation, augment_random_scale, augment_random_rotation_and_scale
 from normalization.body_normalization import BODY_IDENTIFIERS
 from normalization.hand_normalization import HAND_IDENTIFIERS
 from normalization.body_normalization import normalize_single_dict as normalize_single_body_dict
@@ -119,12 +120,18 @@ class CzechSLRDataset(torch_data.Dataset):
     labels: [np.ndarray]
 
     def __init__(self, dataset_filename: str, num_labels=5, transform=None, augmentations=False,
-                 augmentations_prob=0.5, normalize=True, num_remove=0, remove_from=None):
+                 augmentations_prob=0.5, normalize=True, num_remove=0, remove_from=None,
+                 use_skeleton_augmentation=True, skeleton_aug_prob=0.5,
+                 rotation_range=(-15, 15), scale_range=(0.8, 1.2)):
         """
         Initiates the HPOESDataset with the pre-loaded data from the h5 file.
 
         :param dataset_filename: Path to the h5 file
         :param transform: Any data transformation to be applied (default: None)
+        :param use_skeleton_augmentation: Use skeleton-aware augmentations (rotation+scale) (default: True)
+        :param skeleton_aug_prob: Probability to apply skeleton augmentation (default: 0.5)
+        :param rotation_range: Rotation angle range in degrees (default: -15 to +15)
+        :param scale_range: Scale factor range (default: 0.8 to 1.2)
         """
 
         loaded_data = load_dataset(file_location=dataset_filename, num_remove=num_remove, remove_from=remove_from)
@@ -139,6 +146,16 @@ class CzechSLRDataset(torch_data.Dataset):
         self.augmentations = augmentations
         self.augmentations_prob = augmentations_prob
         self.normalize = normalize
+        
+        # Skeleton-aware augmentation parameters
+        self.use_skeleton_augmentation = use_skeleton_augmentation
+        self.skeleton_aug_prob = skeleton_aug_prob
+        self.rotation_range = rotation_range
+        self.scale_range = scale_range
+        
+        # Print augmentation info
+        if self.use_skeleton_augmentation:
+            print(f"✓ CzechSLRDataset: Skeleton augmentation ENABLED (rotation: {rotation_range}°, scale: {scale_range}, prob: {skeleton_aug_prob})")
 
     def __getitem__(self, idx):
         """
@@ -153,8 +170,19 @@ class CzechSLRDataset(torch_data.Dataset):
 
         depth_map = tensor_to_dictionary(depth_map)
 
-        # Apply potential augmentations
-        if self.augmentations and random.random() < self.augmentations_prob:
+        # Apply skeleton-aware augmentations (BEFORE normalization, HIGHER PRIORITY)
+        # These augmentations from SL-TSSI-DenseNet are more effective than legacy ones
+        if self.augmentations and self.use_skeleton_augmentation and random.random() < self.skeleton_aug_prob:
+            # Apply combined rotation + scale augmentation
+            depth_map = augment_random_rotation_and_scale(
+                depth_map, 
+                angle_range=self.rotation_range,
+                scale_range=self.scale_range,
+                center="neck"  # Use neck as rotation/scale center for stability
+            )
+
+        # Apply legacy augmentations (lower priority, for backward compatibility)
+        elif self.augmentations and random.random() < self.augmentations_prob:
 
             selected_aug = randrange(5)
 

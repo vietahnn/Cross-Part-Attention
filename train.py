@@ -71,6 +71,17 @@ def get_default_args():
     parser.add_argument("--gaussian_mean", type=int, default=0, help="Mean parameter for Gaussian noise layer")
     parser.add_argument("--gaussian_std", type=int, default=0.001,
                         help="Standard deviation parameter for Gaussian noise layer")
+    
+    # Skeleton-aware augmentation (inspired by SL-TSSI-DenseNet)
+    parser.add_argument("--use_skeleton_augmentation", type=bool, default=True,
+                        help="Use skeleton-aware augmentations (RandomRotation + RandomScale). "
+                             "More effective than legacy augmentations. Default: True")
+    parser.add_argument("--skeleton_aug_prob", type=float, default=0.5,
+                        help="Probability to apply skeleton augmentation per sample (default: 0.5)")
+    parser.add_argument("--rotation_range", type=str, default="-15,15",
+                        help="Rotation angle range in degrees, format: 'min,max' (default: '-15,15')")
+    parser.add_argument("--scale_range", type=str, default="0.8,1.2",
+                        help="Scale factor range, format: 'min,max' (default: '0.8,1.2')")
 
     # Visualization
     parser.add_argument("--plot_stats", type=bool, default=True,
@@ -118,6 +129,10 @@ def train(args):
     torch.backends.cudnn.deterministic = True
     g = torch.Generator()
     g.manual_seed(args.seed)
+    
+    # Parse augmentation ranges
+    rotation_range = tuple(map(float, args.rotation_range.split(',')))
+    scale_range = tuple(map(float, args.scale_range.split(',')))
 
     # Set the output format to print into the console and save into LOG file
     logging.basicConfig(
@@ -158,14 +173,34 @@ def train(args):
     Path("out-img/").mkdir(parents=True, exist_ok=True)
 
     # MARK: DATA
+    
+    # Print augmentation configuration
+    print("\n" + "="*60)
+    if args.use_skeleton_augmentation:
+        print("🔥 SKELETON-AWARE AUGMENTATION ENABLED (NEW)")
+        print(f"   Rotation range: {rotation_range}°")
+        print(f"   Scale range: {scale_range}x")
+        print(f"   Probability: {args.skeleton_aug_prob}")
+        print(f"   Center: neck joint")
+        print(f"   ✓ Inspired by SL-TSSI-DenseNet")
+    else:
+        print("📦 LEGACY AUGMENTATION (OLD)")
+        print(f"   Using: rotate, shear, arm_joint_rotate")
+    print("="*60 + "\n")
 
     # Training set
     transform = transforms.Compose([GaussianNoise(args.gaussian_mean, args.gaussian_std)])
-    train_set = CzechSLRDataset(args.training_set_path, transform=transform, augmentations=True)
+    train_set = CzechSLRDataset(args.training_set_path, transform=transform, augmentations=True,
+                                use_skeleton_augmentation=args.use_skeleton_augmentation,
+                                skeleton_aug_prob=args.skeleton_aug_prob,
+                                rotation_range=rotation_range,
+                                scale_range=scale_range)
 
     # Validation set
     if args.validation_set == "from-file":
-        val_set = CzechSLRDataset(args.validation_set_path)
+        val_set = CzechSLRDataset(args.validation_set_path,
+                                 augmentations=False,  # No augmentation for validation
+                                 use_skeleton_augmentation=False)
         val_loader = DataLoader(val_set, batch_size=args.batch_size, shuffle=True, generator=g,
                                 num_workers=args.num_worker)
 
@@ -174,6 +209,7 @@ def train(args):
 
         val_set.transform = None
         val_set.augmentations = False
+        val_set.use_skeleton_augmentation = False  # Ensure no skeleton augmentation
         val_loader = DataLoader(val_set, batch_size=args.batch_size, shuffle=True, generator=g,
                                 num_workers=args.num_worker)
 
@@ -182,7 +218,9 @@ def train(args):
 
     # Testing set
     if args.testing_set_path:
-        eval_set = CzechSLRDataset(args.testing_set_path)
+        eval_set = CzechSLRDataset(args.testing_set_path,
+                                   augmentations=False,  # No augmentation for testing
+                                   use_skeleton_augmentation=False)
         eval_loader = DataLoader(eval_set, batch_size=args.batch_size, shuffle=True, generator=g,
                                  num_workers=args.num_worker)
 

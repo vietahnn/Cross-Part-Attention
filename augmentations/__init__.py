@@ -228,6 +228,15 @@ def augment_arm_joint_rotate(sign: dict, probability: float, angle_range: tuple)
     return __wrap_sign_into_row(body_landmarks, hand_landmarks)
 
 
+# Import skeleton-aware augmentations from SL-TSSI-DenseNet
+from augmentations.skeleton_augmentation import (
+    augment_random_rotation,
+    augment_random_scale,
+    augment_random_rotation_and_scale,
+    augment_random_skeleton_transform
+)
+
+
 if __name__ == "__main__":
     pass
 
