@@ -228,6 +228,14 @@ def augment_arm_joint_rotate(sign: dict, probability: float, angle_range: tuple)
     return __wrap_sign_into_row(body_landmarks, hand_landmarks)
 
 
+# Import temporal augmentation (RandomSpeed/Time Warping) from SL-TSSI-DenseNet
+from augmentations.temporal_augmentation import (
+    augment_random_speed,
+    augment_random_speed_uniform,
+    augment_random_speed_fast
+)
+
+
 if __name__ == "__main__":
     pass
 

@@ -6,6 +6,7 @@ import torch.utils.data as torch_data
 
 from random import randrange
 from augmentations import *
+from augmentations.temporal_augmentation import augment_random_speed_fast
 from normalization.body_normalization import BODY_IDENTIFIERS
 from normalization.hand_normalization import HAND_IDENTIFIERS
 from normalization.body_normalization import normalize_single_dict as normalize_single_body_dict
@@ -119,12 +120,16 @@ class CzechSLRDataset(torch_data.Dataset):
     labels: [np.ndarray]
 
     def __init__(self, dataset_filename: str, num_labels=5, transform=None, augmentations=False,
-                 augmentations_prob=0.5, normalize=True, num_remove=0, remove_from=None):
+                 augmentations_prob=0.5, normalize=True, num_remove=0, remove_from=None,
+                 use_random_speed=True, speed_aug_prob=0.5, speed_range=(0.8, 1.2)):
         """
         Initiates the HPOESDataset with the pre-loaded data from the h5 file.
 
         :param dataset_filename: Path to the h5 file
         :param transform: Any data transformation to be applied (default: None)
+        :param use_random_speed: Use RandomSpeed (time warping) augmentation (default: True)
+        :param speed_aug_prob: Probability to apply speed augmentation (default: 0.5)
+        :param speed_range: Speed range as tuple (min_speed, max_speed). 1.0=original, <1.0=slower, >1.0=faster (default: 0.8-1.2)
         """
 
         loaded_data = load_dataset(file_location=dataset_filename, num_remove=num_remove, remove_from=remove_from)
@@ -139,6 +144,15 @@ class CzechSLRDataset(torch_data.Dataset):
         self.augmentations = augmentations
         self.augmentations_prob = augmentations_prob
         self.normalize = normalize
+        
+        # RandomSpeed (temporal augmentation) parameters
+        self.use_random_speed = use_random_speed
+        self.speed_aug_prob = speed_aug_prob
+        self.speed_range = speed_range
+        
+        # Print augmentation info
+        if self.use_random_speed:
+            print(f"✓ CzechSLRDataset: RandomSpeed (time warping) ENABLED (range: {speed_range}, prob: {speed_aug_prob})")
 
     def __getitem__(self, idx):
         """
@@ -152,6 +166,15 @@ class CzechSLRDataset(torch_data.Dataset):
         label = torch.Tensor([self.labels[idx]])
 
         depth_map = tensor_to_dictionary(depth_map)
+
+        # Apply RandomSpeed (time warping) augmentation FIRST (before other augmentations)
+        # This changes the temporal dimension, so must be done before normalization
+        if self.augmentations and self.use_random_speed and random.random() < self.speed_aug_prob:
+            depth_map = augment_random_speed_fast(
+                depth_map,
+                speed_range=self.speed_range,
+                prob=1.0  # Already checked probability above
+            )
 
         # Apply potential augmentations
         if self.augmentations and random.random() < self.augmentations_prob:

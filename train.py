@@ -71,6 +71,16 @@ def get_default_args():
     parser.add_argument("--gaussian_mean", type=int, default=0, help="Mean parameter for Gaussian noise layer")
     parser.add_argument("--gaussian_std", type=int, default=0.001,
                         help="Standard deviation parameter for Gaussian noise layer")
+    
+    # RandomSpeed (Time Warping) augmentation - inspired by SL-TSSI-DenseNet
+    parser.add_argument("--use_random_speed", type=bool, default=True,
+                        help="Use RandomSpeed (time warping) augmentation to simulate different signing speeds. "
+                             "Default: True")
+    parser.add_argument("--speed_aug_prob", type=float, default=0.5,
+                        help="Probability to apply speed augmentation per sample (default: 0.5)")
+    parser.add_argument("--speed_range", type=str, default="0.8,1.2",
+                        help="Speed range as 'min,max'. 1.0=original speed, <1.0=slower (more frames), "
+                             ">1.0=faster (fewer frames). Default: '0.8,1.2'")
 
     # Visualization
     parser.add_argument("--plot_stats", type=bool, default=True,
@@ -118,6 +128,9 @@ def train(args):
     torch.backends.cudnn.deterministic = True
     g = torch.Generator()
     g.manual_seed(args.seed)
+    
+    # Parse speed range
+    speed_range = tuple(map(float, args.speed_range.split(',')))
 
     # Set the output format to print into the console and save into LOG file
     logging.basicConfig(
@@ -158,14 +171,31 @@ def train(args):
     Path("out-img/").mkdir(parents=True, exist_ok=True)
 
     # MARK: DATA
+    
+    # Print augmentation configuration
+    print("\n" + "="*60)
+    if args.use_random_speed:
+        print("🔥 RANDOMSPEED (TIME WARPING) AUGMENTATION ENABLED")
+        print(f"   Speed range: {speed_range}x")
+        print(f"   Probability: {args.speed_aug_prob}")
+        print(f"   Effect: Simulates different signing speeds")
+        print(f"   ✓ Inspired by SL-TSSI-DenseNet")
+    else:
+        print("📦 TIME WARPING DISABLED")
+    print("="*60 + "\n")
 
     # Training set
     transform = transforms.Compose([GaussianNoise(args.gaussian_mean, args.gaussian_std)])
-    train_set = CzechSLRDataset(args.training_set_path, transform=transform, augmentations=True)
+    train_set = CzechSLRDataset(args.training_set_path, transform=transform, augmentations=True,
+                                use_random_speed=args.use_random_speed,
+                                speed_aug_prob=args.speed_aug_prob,
+                                speed_range=speed_range)
 
     # Validation set
     if args.validation_set == "from-file":
-        val_set = CzechSLRDataset(args.validation_set_path)
+        val_set = CzechSLRDataset(args.validation_set_path,
+                                 augmentations=False,  # No augmentation for validation
+                                 use_random_speed=False)
         val_loader = DataLoader(val_set, batch_size=args.batch_size, shuffle=True, generator=g,
                                 num_workers=args.num_worker)
 
@@ -174,6 +204,7 @@ def train(args):
 
         val_set.transform = None
         val_set.augmentations = False
+        val_set.use_random_speed = False  # Ensure no time warping for validation
         val_loader = DataLoader(val_set, batch_size=args.batch_size, shuffle=True, generator=g,
                                 num_workers=args.num_worker)
 
@@ -182,7 +213,9 @@ def train(args):
 
     # Testing set
     if args.testing_set_path:
-        eval_set = CzechSLRDataset(args.testing_set_path)
+        eval_set = CzechSLRDataset(args.testing_set_path,
+                                   augmentations=False,  # No augmentation for testing
+                                   use_random_speed=False)
         eval_loader = DataLoader(eval_set, batch_size=args.batch_size, shuffle=True, generator=g,
                                  num_workers=args.num_worker)
 
