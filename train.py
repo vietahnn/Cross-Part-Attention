@@ -16,6 +16,8 @@ from pathlib import Path
 from utils import __balance_val_split, __split_of_train_sequence, __log_class_statistics
 from datasets.czech_slr_dataset import CzechSLRDataset
 from siformer.model import SiFormer, SpoTer
+from siformer.densenet_model import build_densenet_model
+from siformer.ensemble_model import build_ensemble_model, EnsembleLoss
 from siformer.utils import train_epoch, evaluate, evaluate_top_k
 from siformer.gaussian_noise import GaussianNoise
 
@@ -101,6 +103,27 @@ def get_default_args():
                         help="Direction of cross-modal attention: body_to_hands (body learns from hands), "
                              "hands_to_body (hands learn from body), hands_bidirectional (only hand interaction), "
                              "bidirectional (full bi-directional, more parameters)")
+    
+    # Ensemble settings (Siformer + DenseNet)
+    parser.add_argument("--use_ensemble", type=bool, default=True,
+                        help="Use ensemble of Siformer + DenseNet (default: True)")
+    parser.add_argument("--ensemble_weights", type=str, default="0.5,0.5",
+                        help="Ensemble weights as 'w_siformer,w_densenet' (default: '0.5,0.5')")
+    parser.add_argument("--ensemble_method", type=str, default="weighted_average",
+                        choices=['weighted_average', 'average', 'max'],
+                        help="Ensemble method: weighted_average, average, or max (default: weighted_average)")
+    parser.add_argument("--learnable_ensemble_weights", type=bool, default=False,
+                        help="Make ensemble weights learnable during training (default: False)")
+    parser.add_argument("--aux_loss_weight", type=float, default=0.3,
+                        help="Weight for auxiliary losses from individual models (default: 0.3)")
+    
+    # DenseNet settings
+    parser.add_argument("--densenet_dropout", type=float, default=0.2,
+                        help="Dropout rate for DenseNet classifier (default: 0.2)")
+    parser.add_argument("--densenet_use_1d", type=bool, default=False,
+                        help="Use 1D DenseNet instead of 2D (default: False)")
+    parser.add_argument("--densenet_pretrained", type=bool, default=False,
+                        help="Use ImageNet pretrained weights for DenseNet (default: False)")
 
     return parser
 
@@ -134,17 +157,65 @@ def train(args):
         print("Cuda is available: True")
         device = torch.device("cuda")
 
-    # Construct the model
+    # Print configuration banner
+    print("\n" + "="*70)
+    print("MODEL CONFIGURATION")
+    print("="*70)
+    
+    # Construct the Siformer model
     if args.FIM:
-        slr_model = SiFormer(num_classes=args.num_classes, num_hid=args.num_seq_elements, attn_type=args.attn_type,
+        siformer_model = SiFormer(num_classes=args.num_classes, num_hid=args.num_seq_elements, attn_type=args.attn_type,
                               num_enc_layers=args.num_enc_layers, num_dec_layers=args.num_dec_layers, device=device,
                               IA_encoder=args.IA_encoder, IA_decoder=args.IA_decoder,
                               patience=args.patience, use_cross_attention=args.use_cross_attention,
                               cross_attn_heads=args.cross_attn_heads, 
                               cross_attn_direction=args.cross_attn_direction)
     else:
-        slr_model = SpoTer(num_classes=args.num_classes, num_hid=args.num_seq_elements,
+        siformer_model = SpoTer(num_classes=args.num_classes, num_hid=args.num_seq_elements,
                            num_enc_layers=args.num_enc_layers, num_dec_layers=args.num_dec_layers)
+    
+    print(f"✓ Siformer model created")
+    
+    # Construct ensemble if enabled
+    if args.use_ensemble:
+        print(f"✓ Ensemble mode ENABLED")
+        
+        # Build DenseNet model
+        # Calculate number of keypoints from skeleton structure
+        # left_hand: 21 keypoints, right_hand: 21 keypoints, body: 12 keypoints
+        # Total: 21 + 21 + 12 = 54 keypoints
+        num_keypoints = 54
+        
+        densenet_model = build_densenet_model(
+            num_classes=args.num_classes,
+            num_keypoints=num_keypoints,
+            dropout=args.densenet_dropout,
+            pretrained=args.densenet_pretrained,
+            use_1d=args.densenet_use_1d
+        )
+        
+        # Parse ensemble weights
+        ensemble_weights = tuple(map(float, args.ensemble_weights.split(',')))
+        
+        # Build ensemble model
+        slr_model, ensemble_criterion = build_ensemble_model(
+            siformer_model=siformer_model,
+            densenet_model=densenet_model,
+            ensemble_weights=ensemble_weights,
+            ensemble_method=args.ensemble_method,
+            learnable_weights=args.learnable_ensemble_weights,
+            aux_loss_weight=args.aux_loss_weight
+        )
+        
+        use_ensemble = True
+    else:
+        print(f"✓ Ensemble mode DISABLED (using Siformer only)")
+        slr_model = siformer_model
+        ensemble_criterion = None
+        use_ensemble = False
+    
+    print("="*70 + "\n")
+    
     slr_model.train(True)
     slr_model.to(device)
 
@@ -223,8 +294,12 @@ def train(args):
     avg_train_time_sec_list = []
     for epoch in range(args.epochs):
         start_time = time.time()
-        train_loss, _, _, train_acc, avg_train_time = train_epoch(slr_model, train_loader, cel_criterion, optimizer,
-                                                                  device, scheduler=scheduler)
+        train_loss, _, _, train_acc, avg_train_time = train_epoch(
+            slr_model, train_loader, cel_criterion, optimizer,
+            device, scheduler=scheduler, 
+            use_ensemble=use_ensemble, 
+            ensemble_criterion=ensemble_criterion
+        )
         end_time = time.time()
         train_time = end_time - start_time
 
@@ -234,7 +309,7 @@ def train(args):
 
         if val_loader:
             slr_model.train(False)
-            _, _, val_acc = evaluate(slr_model, val_loader, device)
+            _, _, val_acc = evaluate(slr_model, val_loader, device, use_ensemble=use_ensemble)
             slr_model.train(True)
             val_accs.append(val_acc)
 
@@ -306,8 +381,8 @@ def train(args):
                 tested_model = torch.load(
                     "out-checkpoints/" + args.experiment_name + "/checkpoint_" + checkpoint_id + "_" + str(i) + ".pth")
                 tested_model.train(False)
-                _, _, eval_acc = evaluate(tested_model, eval_loader, device, print_stats=True)
-                _, _, top_val_acc = evaluate_top_k(slr_model, val_loader, device)
+                _, _, eval_acc = evaluate(tested_model, eval_loader, device, print_stats=True, use_ensemble=use_ensemble)
+                _, _, top_val_acc = evaluate_top_k(slr_model, val_loader, device, use_ensemble=use_ensemble)
 
                 if eval_acc > top_result:
                     top_result = eval_acc

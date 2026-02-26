@@ -8,10 +8,27 @@ import time
 from statistics import mean
 
 
-def train_epoch(model, dataloader, criterion, optimizer, device, scheduler=None):
+def train_epoch(model, dataloader, criterion, optimizer, device, scheduler=None, use_ensemble=False, ensemble_criterion=None):
+    """
+    Train for one epoch.
+    
+    Args:
+        model: Model to train (Siformer or EnsembleModel)
+        dataloader: Training data loader
+        criterion: Loss criterion (used only if not ensemble)
+        optimizer: Optimizer
+        device: Device to use
+        scheduler: Learning rate scheduler (optional)
+        use_ensemble: Whether using ensemble model
+        ensemble_criterion: EnsembleLoss instance (required if use_ensemble=True)
+    """
     pred_correct, pred_all = 0, 0
     running_loss = 0.0
     train_time_sec_list = []
+    
+    # For ensemble loss tracking
+    ensemble_losses = {'total': [], 'ensemble': [], 'siformer': [], 'densenet': []}
+    
     for i, data in enumerate(dataloader):
         l_hands, r_hands, bodies, labels = data
         l_hands = l_hands.to(device)
@@ -22,21 +39,32 @@ def train_epoch(model, dataloader, criterion, optimizer, device, scheduler=None)
         optimizer.zero_grad()
         start_time = time.time()
 
-        outputs = model(l_hands, r_hands, bodies, training=True)
+        if use_ensemble:
+            # Ensemble model returns (ensemble_output, siformer_output, densenet_output)
+            ensemble_output, siformer_output, densenet_output = model(l_hands, r_hands, bodies, training=True)
+            outputs = ensemble_output  # Use ensemble output for accuracy
+            
+            # Use ensemble loss
+            loss, loss_dict = ensemble_criterion(ensemble_output, siformer_output, densenet_output, labels.squeeze(1))
+            
+            # Track losses
+            for key in ensemble_losses:
+                ensemble_losses[key].append(loss_dict[key])
+        else:
+            # Standard Siformer model
+            outputs = model(l_hands, r_hands, bodies, training=True)
+            loss = criterion(outputs, labels.squeeze(1))
 
         end_time = time.time()
         train_time_sec = end_time - start_time
         train_time_sec_list.append(train_time_sec)
 
-        loss = criterion(outputs, labels.squeeze(1))
         loss.backward()
         optimizer.step()
         running_loss += loss
 
         # Statistics
         _, preds = torch.max(F.softmax(outputs, dim=1), 1)
-        # print(f'preds: {preds}')
-        # print(f'label: {labels.view(-1)}')
         pred_correct += torch.sum(preds == labels.view(-1)).item()
         pred_all += labels.size(0)
 
@@ -44,30 +72,53 @@ def train_epoch(model, dataloader, criterion, optimizer, device, scheduler=None)
         scheduler.step()
 
     avg_train_time = mean(train_time_sec_list)
+    
+    # Print ensemble loss details if applicable
+    if use_ensemble and len(ensemble_losses['total']) > 0:
+        avg_losses = {k: mean(v) for k, v in ensemble_losses.items()}
+        print(f"  Loss breakdown: Total={avg_losses['total']:.4f}, "
+              f"Ensemble={avg_losses['ensemble']:.4f}, "
+              f"Siformer={avg_losses['siformer']:.4f}, "
+              f"DenseNet={avg_losses['densenet']:.4f}")
 
     return running_loss, pred_correct, pred_all, (pred_correct / pred_all), avg_train_time
 
 
-def evaluate(model, dataloader, device, print_stats=False):
+def evaluate(model, dataloader, device, print_stats=False, use_ensemble=False):
+    """
+    Evaluate model on validation/test set.
+    
+    Args:
+        model: Model to evaluate
+        dataloader: Data loader
+        device: Device to use
+        print_stats: Print per-class statistics
+        use_ensemble: Whether using ensemble model
+    """
     pred_correct, pred_all = 0, 0
     stats = {i: [0, 0] for i in range(100)}
 
     with torch.no_grad():
         for i, data in enumerate(dataloader):
             l_hands, r_hands, bodies, labels = data
-            l_hands = l_hands.to(device)  # [24, 204, 21, 2]
-            r_hands = r_hands.to(device)  # [24, 204, 21, 2]
-            bodies = bodies.to(device)  # [24, 204, 12, 2]
-            labels = labels.to(device, dtype=torch.long)  # [24, 1]
+            l_hands = l_hands.to(device)
+            r_hands = r_hands.to(device)
+            bodies = bodies.to(device)
+            labels = labels.to(device, dtype=torch.long)
 
             for j in range(labels.size(0)):
-                l_hand = l_hands[j].unsqueeze(0)  # [1, 204, 21, 2]
-                r_hand = r_hands[j].unsqueeze(0)  # [1, 204, 21, 2]
-                body = bodies[j].unsqueeze(0)  # [1, 204, 12, 2]
+                l_hand = l_hands[j].unsqueeze(0)
+                r_hand = r_hands[j].unsqueeze(0)
+                body = bodies[j].unsqueeze(0)
                 label = labels[j]
 
-                output = model(l_hand, r_hand, body, training=False)
-                output = output.unsqueeze(0).expand(1, -1, -1)
+                if use_ensemble:
+                    # Ensemble model returns (ensemble_output, siformer_output, densenet_output)
+                    ensemble_output, _, _ = model(l_hand, r_hand, body, training=False)
+                    output = ensemble_output.unsqueeze(0).expand(1, -1, -1)
+                else:
+                    output = model(l_hand, r_hand, body, training=False)
+                    output = output.unsqueeze(0).expand(1, -1, -1)
 
                 # Statistics
                 if int(torch.argmax(torch.nn.functional.softmax(output, dim=2))) == int(label):
@@ -87,7 +138,17 @@ def evaluate(model, dataloader, device, print_stats=False):
     return pred_correct, pred_all, (pred_correct / pred_all)
 
 
-def evaluate_top_k(model, dataloader, device, k=5):
+def evaluate_top_k(model, dataloader, device, k=5, use_ensemble=False):
+    """
+    Evaluate top-k accuracy.
+    
+    Args:
+        model: Model to evaluate
+        dataloader: Data loader
+        device: Device to use
+        k: Top-k value
+        use_ensemble: Whether using ensemble model
+    """
     pred_correct, pred_all = 0, 0
 
     with torch.no_grad():
@@ -99,13 +160,17 @@ def evaluate_top_k(model, dataloader, device, k=5):
             labels = labels.to(device, dtype=torch.long)
 
             for j in range(labels.size(0)):
-                l_hand = l_hands[j].unsqueeze(0)  # [1, 204, 21, 2]
-                r_hand = r_hands[j].unsqueeze(0)  # [1, 204, 21, 2]
-                body = bodies[j].unsqueeze(0)  # [1, 204, 12, 2]
+                l_hand = l_hands[j].unsqueeze(0)
+                r_hand = r_hands[j].unsqueeze(0)
+                body = bodies[j].unsqueeze(0)
                 label = labels[j]
 
-                output = model(l_hand, r_hand, body, training=False)
-                output = output.unsqueeze(0).expand(1, -1, -1)
+                if use_ensemble:
+                    ensemble_output, _, _ = model(l_hand, r_hand, body, training=False)
+                    output = ensemble_output.unsqueeze(0).expand(1, -1, -1)
+                else:
+                    output = model(l_hand, r_hand, body, training=False)
+                    output = output.unsqueeze(0).expand(1, -1, -1)
 
                 # Statistics
                 if int(label[0][0]) in torch.topk(output, k).indices.tolist():
