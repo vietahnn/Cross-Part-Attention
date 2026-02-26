@@ -204,6 +204,9 @@ class DenseNetSkeleton(nn.Module):
         """
         batch_size, seq_len, features = x.shape
         
+        # Ensure input is float32 (fix DoubleTensor/FloatTensor mismatch)
+        x = x.float()
+        
         # Reshape to (batch_size, num_keypoints, seq_len, 2)
         # Then permute to (batch_size, 2, seq_len, num_keypoints)
         # This treats the sequence as a 2D "image" with 2 channels (x, y)

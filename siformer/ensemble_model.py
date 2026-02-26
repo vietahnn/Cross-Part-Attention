@@ -87,6 +87,9 @@ class EnsembleModel(nn.Module):
         
         densenet_input = torch.cat([l_hand_flat, r_hand_flat, body_flat], dim=-1)  # (batch, seq_len, 90)
         
+        # Convert to float32 to match DenseNet weights (fix DoubleTensor/FloatTensor mismatch)
+        densenet_input = densenet_input.float()
+        
         # Get DenseNet predictions
         densenet_output = self.densenet(densenet_input)
         
