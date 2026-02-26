@@ -10,6 +10,7 @@ from normalization.body_normalization import BODY_IDENTIFIERS
 from normalization.hand_normalization import HAND_IDENTIFIERS
 from normalization.body_normalization import normalize_single_dict as normalize_single_body_dict
 from normalization.hand_normalization import normalize_single_dict as normalize_single_hand_dict
+from normalization.tssi_normalization import normalize_single_dict_tssi
 
 ORI_HAND_IDENTIFIERS = HAND_IDENTIFIERS
 HAND_IDENTIFIERS = [id + "_0" for id in HAND_IDENTIFIERS] + [id + "_1" for id in HAND_IDENTIFIERS]
@@ -117,14 +118,18 @@ class CzechSLRDataset(torch_data.Dataset):
 
     data: [np.ndarray]
     labels: [np.ndarray]
+    _printed_norm_info = False  # Class variable to track if normalization info has been printed
 
     def __init__(self, dataset_filename: str, num_labels=5, transform=None, augmentations=False,
-                 augmentations_prob=0.5, normalize=True, num_remove=0, remove_from=None):
+                 augmentations_prob=0.5, normalize=True, num_remove=0, remove_from=None,
+                 use_tssi_norm=True, tssi_method="sequence"):
         """
         Initiates the HPOESDataset with the pre-loaded data from the h5 file.
 
         :param dataset_filename: Path to the h5 file
         :param transform: Any data transformation to be applied (default: None)
+        :param use_tssi_norm: Use TSSI normalization instead of bounding-box normalization (default: True)
+        :param tssi_method: TSSI method - 'sequence' or 'frame' (default: 'sequence')
         """
 
         loaded_data = load_dataset(file_location=dataset_filename, num_remove=num_remove, remove_from=remove_from)
@@ -139,6 +144,14 @@ class CzechSLRDataset(torch_data.Dataset):
         self.augmentations = augmentations
         self.augmentations_prob = augmentations_prob
         self.normalize = normalize
+        self.use_tssi_norm = use_tssi_norm
+        self.tssi_method = tssi_method
+        
+        # Print normalization method info
+        if self.use_tssi_norm:
+            print(f"✓ CzechSLRDataset: Using TSSI normalization (method: {tssi_method})")
+        else:
+            print(f"✓ CzechSLRDataset: Using bounding-box normalization (legacy)")
 
     def __getitem__(self, idx):
         """
@@ -174,8 +187,22 @@ class CzechSLRDataset(torch_data.Dataset):
                 depth_map = depth_map
 
         if self.normalize:
-            depth_map = normalize_single_body_dict(depth_map)
-            depth_map = normalize_single_hand_dict(depth_map)
+            # Print normalization info only once (first batch item)
+            if not CzechSLRDataset._printed_norm_info:
+                if self.use_tssi_norm:
+                    print(f"✓ Applying TSSI normalization (method: {self.tssi_method}, center: neck)")
+                else:
+                    print(f"✓ Applying legacy bounding-box normalization (body + hands separate)")
+                CzechSLRDataset._printed_norm_info = True
+            
+            if self.use_tssi_norm:
+                # TSSI Normalization - normalizes entire sequence at once
+                # This preserves spatial relationships and scale across frames
+                depth_map = normalize_single_dict_tssi(depth_map, method=self.tssi_method, center_joint="neck")
+            else:
+                # Legacy normalization - separate bounding box for body and hands
+                depth_map = normalize_single_body_dict(depth_map)
+                depth_map = normalize_single_hand_dict(depth_map)
 
         l_hand_depth_map, l_hand_identifiers = isolate_single_hand(depth_map, 0)
         r_hand_depth_map, r_hand_identifiers = isolate_single_hand(depth_map, 1)

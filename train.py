@@ -71,6 +71,14 @@ def get_default_args():
     parser.add_argument("--gaussian_mean", type=int, default=0, help="Mean parameter for Gaussian noise layer")
     parser.add_argument("--gaussian_std", type=int, default=0.001,
                         help="Standard deviation parameter for Gaussian noise layer")
+    
+    # TSSI Normalization
+    parser.add_argument("--use_tssi_norm", type=bool, default=True,
+                        help="Use Translation-Scale-Shift Invariant normalization instead of bounding-box normalization. "
+                             "TSSI preserves spatial relationships across frames. Default: True")
+    parser.add_argument("--tssi_method", type=str, default="sequence", choices=["sequence", "frame"],
+                        help="TSSI normalization method: 'sequence' (normalize across all frames, recommended) or "
+                             "'frame' (normalize each frame independently). Default: sequence")
 
     # Visualization
     parser.add_argument("--plot_stats", type=bool, default=True,
@@ -109,6 +117,7 @@ def train(args):
     # MARK: TRAINING PREPARATION AND MODULES
 
     # Initialize all the random seeds
+    print(args.seed)
     random.seed(args.seed)
     np.random.seed(args.seed)
     os.environ["PYTHONHASHSEED"] = str(args.seed)
@@ -158,14 +167,29 @@ def train(args):
     Path("out-img/").mkdir(parents=True, exist_ok=True)
 
     # MARK: DATA
+    
+    # Print normalization configuration
+    print("\n" + "="*60)
+    if args.use_tssi_norm:
+        print("🔥 TSSI NORMALIZATION ENABLED (NEW)")
+        print(f"   Method: {args.tssi_method.upper()}")
+        print(f"   Translation-invariant: ✓")
+        print(f"   Scale-invariant: ✓")
+        print(f"   Preserves spatial relationships: ✓")
+    else:
+        print("📦 BOUNDING-BOX NORMALIZATION (LEGACY)")
+        print(f"   Per-component normalization: Body + Hands separate")
+    print("="*60 + "\n")
 
     # Training set
     transform = transforms.Compose([GaussianNoise(args.gaussian_mean, args.gaussian_std)])
-    train_set = CzechSLRDataset(args.training_set_path, transform=transform, augmentations=True)
+    train_set = CzechSLRDataset(args.training_set_path, transform=transform, augmentations=True,
+                                use_tssi_norm=args.use_tssi_norm, tssi_method=args.tssi_method)
 
     # Validation set
     if args.validation_set == "from-file":
-        val_set = CzechSLRDataset(args.validation_set_path)
+        val_set = CzechSLRDataset(args.validation_set_path, use_tssi_norm=args.use_tssi_norm, 
+                                 tssi_method=args.tssi_method)
         val_loader = DataLoader(val_set, batch_size=args.batch_size, shuffle=True, generator=g,
                                 num_workers=args.num_worker)
 
@@ -182,7 +206,8 @@ def train(args):
 
     # Testing set
     if args.testing_set_path:
-        eval_set = CzechSLRDataset(args.testing_set_path)
+        eval_set = CzechSLRDataset(args.testing_set_path, use_tssi_norm=args.use_tssi_norm,
+                                  tssi_method=args.tssi_method)
         eval_loader = DataLoader(eval_set, batch_size=args.batch_size, shuffle=True, generator=g,
                                  num_workers=args.num_worker)
 
