@@ -58,6 +58,14 @@ def get_default_args():
     parser.add_argument("--log_freq", type=int, default=1,
                         help="Log frequency (frequency of printing all the training info)")
 
+    # Manifold mixup settings
+    parser.add_argument("--use_manifold_mixup", type=bool, default=True,
+                        help="Enable manifold mixup in hidden space")
+    parser.add_argument("--mixup_alpha", type=float, default=0.2,
+                        help="Beta distribution alpha for mixup")
+    parser.add_argument("--mixup_weight", type=float, default=0.5,
+                        help="Weight for manifold mixup loss")
+
     # Checkpointing
     parser.add_argument("--save_checkpoints", type=bool, default=True,
                         help="Determines whether to save weights checkpoints")
@@ -223,8 +231,17 @@ def train(args):
     avg_train_time_sec_list = []
     for epoch in range(args.epochs):
         start_time = time.time()
-        train_loss, _, _, train_acc, avg_train_time = train_epoch(slr_model, train_loader, cel_criterion, optimizer,
-                                                                  device, scheduler=scheduler)
+        train_loss, _, _, train_acc, avg_train_time = train_epoch(
+            slr_model,
+            train_loader,
+            cel_criterion,
+            optimizer,
+            device,
+            scheduler=scheduler,
+            use_manifold_mixup=args.use_manifold_mixup,
+            mixup_alpha=args.mixup_alpha,
+            mixup_weight=args.mixup_weight
+        )
         end_time = time.time()
         train_time = end_time - start_time
 

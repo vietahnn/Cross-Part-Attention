@@ -233,7 +233,10 @@ class SpoTer(nn.Module):
         self.projection = nn.Linear(num_hid, num_classes)
         print(f"num_enc_layers {num_enc_layers}, num_dec_layers {num_dec_layers}")
 
-    def forward(self, l_hand, r_hand, body, training):
+    def project_embedding(self, embedding):
+        return self.projection(embedding)
+
+    def forward(self, l_hand, r_hand, body, training, return_embedding=False):
         batch_size = l_hand.size(0)
 
         inputs = torch.cat((l_hand, r_hand, body), -2)
@@ -243,7 +246,10 @@ class SpoTer(nn.Module):
         new_inputs = new_inputs.permute(1, 0, 2).type(dtype=torch.float32)
 
         transformer_out = self.transformer(new_inputs, self.class_query.repeat(1, batch_size, 1)).transpose(0, 1)
-        out = self.projection(transformer_out).squeeze()
+        seq_embedding = transformer_out.squeeze(1)
+        out = self.projection(seq_embedding).squeeze()
+        if return_embedding:
+            return out, seq_embedding
         return out
 
 
@@ -270,7 +276,10 @@ class SiFormer(nn.Module):
         print(f"num_enc_layers {num_enc_layers}, num_dec_layers {num_dec_layers}, patient {patience}, cross_attn {use_cross_attention}, direction {cross_attn_direction}")
         self.projection = nn.Linear(num_hid, num_classes)
 
-    def forward(self, l_hand, r_hand, body, training):
+    def project_embedding(self, embedding):
+        return self.projection(embedding)
+
+    def forward(self, l_hand, r_hand, body, training, return_embedding=False):
         batch_size = l_hand.size(0)
         # (batch_size, seq_len, respected_feature_size, coordinates): (24, 204, 54, 2)
         # -> (batch_size, seq_len, feature_size):  (24, 204, 108)
@@ -298,7 +307,10 @@ class SiFormer(nn.Module):
         # print(transformer_output.shape)
 
         # (batch_size, 1, feature_size) -> (batch_size, num_class): (24, 100)
-        out = self.projection(transformer_output).squeeze()
+        seq_embedding = transformer_output.squeeze(1)
+        out = self.projection(seq_embedding).squeeze()
+        if return_embedding:
+            return out, seq_embedding
         return out
 
     @staticmethod

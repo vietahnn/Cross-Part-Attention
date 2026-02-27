@@ -8,7 +8,24 @@ import time
 from statistics import mean
 
 
-def train_epoch(model, dataloader, criterion, optimizer, device, scheduler=None):
+def _sample_mixup_lambda(alpha, device):
+    if alpha <= 0:
+        return 1.0
+    dist = torch.distributions.Beta(alpha, alpha)
+    return dist.sample().to(device)
+
+
+def train_epoch(
+    model,
+    dataloader,
+    criterion,
+    optimizer,
+    device,
+    scheduler=None,
+    use_manifold_mixup=True,
+    mixup_alpha=0.2,
+    mixup_weight=0.5
+):
     pred_correct, pred_all = 0, 0
     running_loss = 0.0
     train_time_sec_list = []
@@ -22,13 +39,27 @@ def train_epoch(model, dataloader, criterion, optimizer, device, scheduler=None)
         optimizer.zero_grad()
         start_time = time.time()
 
-        outputs = model(l_hands, r_hands, bodies, training=True)
+        if use_manifold_mixup:
+            outputs, embeddings = model(l_hands, r_hands, bodies, training=True, return_embedding=True)
+        else:
+            outputs = model(l_hands, r_hands, bodies, training=True)
 
         end_time = time.time()
         train_time_sec = end_time - start_time
         train_time_sec_list.append(train_time_sec)
 
-        loss = criterion(outputs, labels.squeeze(1))
+        ce_loss = criterion(outputs, labels.squeeze(1))
+        if use_manifold_mixup:
+            lam = _sample_mixup_lambda(mixup_alpha, outputs.device)
+            index = torch.randperm(labels.size(0), device=outputs.device)
+            mixed_embeddings = lam * embeddings + (1 - lam) * embeddings[index]
+            mixed_logits = model.project_embedding(mixed_embeddings)
+            labels_a = labels.squeeze(1)
+            labels_b = labels_a[index]
+            mixup_loss = lam * criterion(mixed_logits, labels_a) + (1 - lam) * criterion(mixed_logits, labels_b)
+            loss = ce_loss + (mixup_weight * mixup_loss)
+        else:
+            loss = ce_loss
         loss.backward()
         optimizer.step()
         running_loss += loss
