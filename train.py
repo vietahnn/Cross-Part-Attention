@@ -58,6 +58,16 @@ def get_default_args():
     parser.add_argument("--log_freq", type=int, default=1,
                         help="Log frequency (frequency of printing all the training info)")
 
+    # Sequence-level adversarial training settings
+    parser.add_argument("--use_adv_train", type=bool, default=True,
+                        help="Enable sequence-level adversarial training")
+    parser.add_argument("--adv_eps", type=float, default=0.002,
+                        help="FGSM perturbation magnitude")
+    parser.add_argument("--adv_weight", type=float, default=0.5,
+                        help="Weight for adversarial consistency loss")
+    parser.add_argument("--adv_temp", type=float, default=2.0,
+                        help="Temperature for adversarial consistency loss")
+
     # Checkpointing
     parser.add_argument("--save_checkpoints", type=bool, default=True,
                         help="Determines whether to save weights checkpoints")
@@ -223,8 +233,18 @@ def train(args):
     avg_train_time_sec_list = []
     for epoch in range(args.epochs):
         start_time = time.time()
-        train_loss, _, _, train_acc, avg_train_time = train_epoch(slr_model, train_loader, cel_criterion, optimizer,
-                                                                  device, scheduler=scheduler)
+        train_loss, _, _, train_acc, avg_train_time = train_epoch(
+            slr_model,
+            train_loader,
+            cel_criterion,
+            optimizer,
+            device,
+            scheduler=scheduler,
+            use_adv_train=args.use_adv_train,
+            adv_eps=args.adv_eps,
+            adv_weight=args.adv_weight,
+            adv_temp=args.adv_temp
+        )
         end_time = time.time()
         train_time = end_time - start_time
 

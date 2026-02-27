@@ -8,7 +8,24 @@ import time
 from statistics import mean
 
 
-def train_epoch(model, dataloader, criterion, optimizer, device, scheduler=None):
+def _safe_sign(tensor):
+    if tensor is None:
+        return 0
+    return tensor.sign()
+
+
+def train_epoch(
+    model,
+    dataloader,
+    criterion,
+    optimizer,
+    device,
+    scheduler=None,
+    use_adv_train=True,
+    adv_eps=0.002,
+    adv_weight=0.5,
+    adv_temp=2.0
+):
     pred_correct, pred_all = 0, 0
     running_loss = 0.0
     train_time_sec_list = []
@@ -28,7 +45,32 @@ def train_epoch(model, dataloader, criterion, optimizer, device, scheduler=None)
         train_time_sec = end_time - start_time
         train_time_sec_list.append(train_time_sec)
 
-        loss = criterion(outputs, labels.squeeze(1))
+        ce_loss = criterion(outputs, labels.squeeze(1))
+        if use_adv_train:
+            l_adv = l_hands.detach().requires_grad_(True)
+            r_adv = r_hands.detach().requires_grad_(True)
+            b_adv = bodies.detach().requires_grad_(True)
+            adv_base_logits = model(l_adv, r_adv, b_adv, training=True)
+            adv_base_loss = criterion(adv_base_logits, labels.squeeze(1))
+            grads = torch.autograd.grad(
+                adv_base_loss,
+                [l_adv, r_adv, b_adv],
+                retain_graph=False,
+                create_graph=False,
+                allow_unused=True
+            )
+            l_pert = l_hands + adv_eps * _safe_sign(grads[0])
+            r_pert = r_hands + adv_eps * _safe_sign(grads[1])
+            b_pert = bodies + adv_eps * _safe_sign(grads[2])
+            adv_logits = model(l_pert, r_pert, b_pert, training=True)
+
+            clean_probs = F.softmax(outputs / adv_temp, dim=1).detach()
+            adv_log_probs = F.log_softmax(adv_logits / adv_temp, dim=1)
+            adv_loss = F.kl_div(adv_log_probs, clean_probs, reduction="batchmean")
+            adv_loss = adv_loss * (adv_temp ** 2)
+            loss = ce_loss + (adv_weight * adv_loss)
+        else:
+            loss = ce_loss
         loss.backward()
         optimizer.step()
         running_loss += loss
