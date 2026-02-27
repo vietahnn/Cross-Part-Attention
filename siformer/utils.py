@@ -8,6 +8,13 @@ import time
 from statistics import mean
 
 
+def _sample_mixup_lambda(alpha, device):
+    if alpha <= 0:
+        return 1.0
+    dist = torch.distributions.Beta(alpha, alpha)
+    return dist.sample().to(device)
+
+
 def temporal_crop_and_resize(x, min_ratio=0.7, max_ratio=1.0):
     # x: [B, T, J, C]
     batch_size, seq_len, joints, coords = x.shape
@@ -47,7 +54,10 @@ def train_epoch(
     temporal_weight=0.5,
     temporal_temp=2.0,
     temporal_min_ratio=0.7,
-    temporal_max_ratio=1.0
+    temporal_max_ratio=1.0,
+    use_manifold_mixup=True,
+    mixup_alpha=0.2,
+    mixup_weight=0.5
 ):
     pred_correct, pred_all = 0, 0
     running_loss = 0.0
@@ -62,7 +72,10 @@ def train_epoch(
         optimizer.zero_grad()
         start_time = time.time()
 
-        outputs = model(l_hands, r_hands, bodies, training=True)
+        if use_manifold_mixup:
+            outputs, embeddings = model(l_hands, r_hands, bodies, training=True, return_embedding=True)
+        else:
+            outputs = model(l_hands, r_hands, bodies, training=True)
         temporal_loss = None
         if use_temporal_invariance:
             l_view1 = temporal_crop_and_resize(l_hands, temporal_min_ratio, temporal_max_ratio)
@@ -81,10 +94,18 @@ def train_epoch(
         train_time_sec_list.append(train_time_sec)
 
         ce_loss = criterion(outputs, labels.squeeze(1))
+        loss = ce_loss
         if temporal_loss is not None:
-            loss = ce_loss + (temporal_weight * temporal_loss)
-        else:
-            loss = ce_loss
+            loss = loss + (temporal_weight * temporal_loss)
+        if use_manifold_mixup:
+            lam = _sample_mixup_lambda(mixup_alpha, outputs.device)
+            index = torch.randperm(labels.size(0), device=outputs.device)
+            mixed_embeddings = lam * embeddings + (1 - lam) * embeddings[index]
+            mixed_logits = model.project_embedding(mixed_embeddings)
+            labels_a = labels.squeeze(1)
+            labels_b = labels_a[index]
+            mixup_loss = lam * criterion(mixed_logits, labels_a) + (1 - lam) * criterion(mixed_logits, labels_b)
+            loss = loss + (mixup_weight * mixup_loss)
         loss.backward()
         optimizer.step()
         running_loss += loss

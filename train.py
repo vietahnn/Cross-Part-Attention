@@ -59,6 +59,14 @@ def get_default_args():
     parser.add_argument("--log_freq", type=int, default=1,
                         help="Log frequency (frequency of printing all the training info)")
 
+    # Manifold mixup settings
+    parser.add_argument("--use_manifold_mixup", type=bool, default=True,
+                        help="Enable manifold mixup in hidden space")
+    parser.add_argument("--mixup_alpha", type=float, default=0.2,
+                        help="Beta distribution alpha for mixup")
+    parser.add_argument("--mixup_weight", type=float, default=0.5,
+                        help="Weight for manifold mixup loss")
+
     # Temporal-invariance regularization settings
     parser.add_argument("--use_temporal_invariance", type=bool, default=True,
                         help="Enable temporal-invariance regularization")
@@ -247,7 +255,10 @@ def train(args):
             temporal_weight=args.temporal_weight,
             temporal_temp=args.temporal_temp,
             temporal_min_ratio=args.temporal_min_ratio,
-            temporal_max_ratio=args.temporal_max_ratio
+            temporal_max_ratio=args.temporal_max_ratio,
+            use_manifold_mixup=args.use_manifold_mixup,
+            mixup_alpha=args.mixup_alpha,
+            mixup_weight=args.mixup_weight
         )
         end_time = time.time()
         train_time = end_time - start_time
