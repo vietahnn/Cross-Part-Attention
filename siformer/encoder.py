@@ -155,8 +155,9 @@ class PBEEncoder(nn.TransformerEncoder):
                 mod_output = output
                 if self.norm is not None:
                     mod_output = self.norm(mod_output)  # [L, B, D/F]
-                classifier_out = self.inner_classifiers[i](mod_output).squeeze().unsqueeze(0)  # [B, L, C]
-                projection_out = self.projections[i](classifier_out.permute(0, 2, 1)).squeeze(-1)  # [1, 100]
+                classifier_out = self.inner_classifiers[i](mod_output)  # [L, B, C]
+                classifier_out = classifier_out.permute(1, 2, 0)  # [B, C, L]
+                projection_out = self.projections[i](classifier_out).squeeze(-1)  # [B, 100]
                 labels = projection_out.detach().argmax(dim=1)  # [1]
                 if patient_result is not None:
                     patient_labels = patient_result.detach().argmax(dim=1)
