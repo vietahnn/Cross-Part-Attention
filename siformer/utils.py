@@ -25,6 +25,45 @@ def temporal_crop_and_resize(x, min_ratio=0.7, max_ratio=1.0):
     return resized
 
 
+def temporal_time_warp(x, min_scale=0.7, max_scale=1.3):
+    # x: [B, T, J, C]
+    batch_size, seq_len, joints, coords = x.shape
+    scale = torch.empty(1, device=x.device).uniform_(min_scale, max_scale).item()
+    warped_len = max(2, int(seq_len * scale))
+    reshaped = x.permute(0, 2, 3, 1).contiguous().view(batch_size, joints * coords, seq_len)
+    warped = F.interpolate(reshaped, size=warped_len, mode="linear", align_corners=False)
+    warped = F.interpolate(warped, size=seq_len, mode="linear", align_corners=False)
+    warped = warped.view(batch_size, joints, coords, seq_len).permute(0, 3, 1, 2).contiguous()
+    return warped
+
+
+def temporal_frame_drop(x, drop_ratio=0.1):
+    # x: [B, T, J, C]
+    if drop_ratio <= 0:
+        return x
+    seq_len = x.shape[1]
+    keep_mask = torch.rand(seq_len, device=x.device) > drop_ratio
+    return x * keep_mask.view(1, seq_len, 1, 1)
+
+
+def temporal_augment_view(
+    x,
+    min_ratio=0.7,
+    max_ratio=1.0,
+    warp_min=0.7,
+    warp_max=1.3,
+    drop_ratio=0.1,
+    use_warp=True,
+    use_drop=True
+):
+    out = temporal_crop_and_resize(x, min_ratio=min_ratio, max_ratio=max_ratio)
+    if use_warp:
+        out = temporal_time_warp(out, min_scale=warp_min, max_scale=warp_max)
+    if use_drop:
+        out = temporal_frame_drop(out, drop_ratio=drop_ratio)
+    return out
+
+
 def temporal_invariance_loss(logits_a, logits_b, temperature=2.0):
     probs_a = F.softmax(logits_a / temperature, dim=1)
     probs_b = F.softmax(logits_b / temperature, dim=1)
@@ -34,6 +73,17 @@ def temporal_invariance_loss(logits_a, logits_b, temperature=2.0):
     kl_ab = F.kl_div(log_probs_a, probs_b.detach(), reduction="batchmean")
     kl_ba = F.kl_div(log_probs_b, probs_a.detach(), reduction="batchmean")
     return (kl_ab + kl_ba) * (temperature ** 2)
+
+
+def cross_modal_consistency_loss(full_logits, hands_logits, body_logits, temperature=2.0):
+    target_probs = F.softmax(full_logits / temperature, dim=1).detach()
+    hands_log_probs = F.log_softmax(hands_logits / temperature, dim=1)
+    body_log_probs = F.log_softmax(body_logits / temperature, dim=1)
+
+    hands_kl = F.kl_div(hands_log_probs, target_probs, reduction="batchmean")
+    body_kl = F.kl_div(body_log_probs, target_probs, reduction="batchmean")
+
+    return (hands_kl + body_kl) * (temperature ** 2)
 
 
 def train_epoch(
@@ -47,7 +97,16 @@ def train_epoch(
     temporal_weight=0.5,
     temporal_temp=2.0,
     temporal_min_ratio=0.7,
-    temporal_max_ratio=1.0
+    temporal_max_ratio=1.0,
+    temporal_views=3,
+    temporal_warp_min=0.7,
+    temporal_warp_max=1.3,
+    temporal_drop_ratio=0.1,
+    temporal_use_warp=True,
+    temporal_use_drop=True,
+    use_cm_consistency=True,
+    cm_weight=0.5,
+    cm_temp=2.0
 ):
     pred_correct, pred_all = 0, 0
     running_loss = 0.0
@@ -65,26 +124,110 @@ def train_epoch(
         outputs = model(l_hands, r_hands, bodies, training=True)
         temporal_loss = None
         if use_temporal_invariance:
-            l_view1 = temporal_crop_and_resize(l_hands, temporal_min_ratio, temporal_max_ratio)
-            r_view1 = temporal_crop_and_resize(r_hands, temporal_min_ratio, temporal_max_ratio)
-            b_view1 = temporal_crop_and_resize(bodies, temporal_min_ratio, temporal_max_ratio)
-            l_view2 = temporal_crop_and_resize(l_hands, temporal_min_ratio, temporal_max_ratio)
-            r_view2 = temporal_crop_and_resize(r_hands, temporal_min_ratio, temporal_max_ratio)
-            b_view2 = temporal_crop_and_resize(bodies, temporal_min_ratio, temporal_max_ratio)
+            mid_ratio = (temporal_min_ratio + temporal_max_ratio) / 2.0
+            views = []
 
-            logits_view1 = model(l_view1, r_view1, b_view1, training=True)
-            logits_view2 = model(l_view2, r_view2, b_view2, training=True)
-            temporal_loss = temporal_invariance_loss(logits_view1, logits_view2, temperature=temporal_temp)
+            if temporal_views >= 1:
+                l_view = temporal_augment_view(
+                    l_hands,
+                    min_ratio=temporal_min_ratio,
+                    max_ratio=mid_ratio,
+                    warp_min=temporal_warp_min,
+                    warp_max=temporal_warp_max,
+                    drop_ratio=temporal_drop_ratio,
+                    use_warp=temporal_use_warp,
+                    use_drop=temporal_use_drop
+                )
+                r_view = temporal_augment_view(
+                    r_hands,
+                    min_ratio=temporal_min_ratio,
+                    max_ratio=mid_ratio,
+                    warp_min=temporal_warp_min,
+                    warp_max=temporal_warp_max,
+                    drop_ratio=temporal_drop_ratio,
+                    use_warp=temporal_use_warp,
+                    use_drop=temporal_use_drop
+                )
+                b_view = temporal_augment_view(
+                    bodies,
+                    min_ratio=temporal_min_ratio,
+                    max_ratio=mid_ratio,
+                    warp_min=temporal_warp_min,
+                    warp_max=temporal_warp_max,
+                    drop_ratio=temporal_drop_ratio,
+                    use_warp=temporal_use_warp,
+                    use_drop=temporal_use_drop
+                )
+                views.append(model(l_view, r_view, b_view, training=True))
+
+            if temporal_views >= 2:
+                l_view = temporal_augment_view(
+                    l_hands,
+                    min_ratio=mid_ratio,
+                    max_ratio=temporal_max_ratio,
+                    warp_min=temporal_warp_min,
+                    warp_max=temporal_warp_max,
+                    drop_ratio=temporal_drop_ratio,
+                    use_warp=temporal_use_warp,
+                    use_drop=temporal_use_drop
+                )
+                r_view = temporal_augment_view(
+                    r_hands,
+                    min_ratio=mid_ratio,
+                    max_ratio=temporal_max_ratio,
+                    warp_min=temporal_warp_min,
+                    warp_max=temporal_warp_max,
+                    drop_ratio=temporal_drop_ratio,
+                    use_warp=temporal_use_warp,
+                    use_drop=temporal_use_drop
+                )
+                b_view = temporal_augment_view(
+                    bodies,
+                    min_ratio=mid_ratio,
+                    max_ratio=temporal_max_ratio,
+                    warp_min=temporal_warp_min,
+                    warp_max=temporal_warp_max,
+                    drop_ratio=temporal_drop_ratio,
+                    use_warp=temporal_use_warp,
+                    use_drop=temporal_use_drop
+                )
+                views.append(model(l_view, r_view, b_view, training=True))
+
+            if temporal_views >= 3:
+                views.append(model(l_hands, r_hands, bodies, training=True))
+
+            if len(views) > 1:
+                pair_loss = 0.0
+                pair_count = 0
+                for i_idx in range(len(views)):
+                    for j_idx in range(i_idx + 1, len(views)):
+                        pair_loss = pair_loss + temporal_invariance_loss(
+                            views[i_idx],
+                            views[j_idx],
+                            temperature=temporal_temp
+                        )
+                        pair_count += 1
+                temporal_loss = pair_loss / max(1, pair_count)
+
+        cm_loss = None
+        if use_cm_consistency:
+            zero_l = torch.zeros_like(l_hands)
+            zero_r = torch.zeros_like(r_hands)
+            zero_b = torch.zeros_like(bodies)
+            hands_logits = model(l_hands, r_hands, zero_b, training=True)
+            body_logits = model(zero_l, zero_r, bodies, training=True)
+            cm_loss = cross_modal_consistency_loss(outputs, hands_logits, body_logits, temperature=cm_temp)
 
         end_time = time.time()
         train_time_sec = end_time - start_time
         train_time_sec_list.append(train_time_sec)
 
         ce_loss = criterion(outputs, labels.squeeze(1))
+        loss = ce_loss
         if temporal_loss is not None:
-            loss = ce_loss + (temporal_weight * temporal_loss)
-        else:
-            loss = ce_loss
+            loss = loss + (temporal_weight * temporal_loss)
+        if cm_loss is not None:
+            loss = loss + (cm_weight * cm_loss)
         loss.backward()
         optimizer.step()
         running_loss += loss

@@ -70,6 +70,26 @@ def get_default_args():
                         help="Minimum crop ratio for temporal invariance")
     parser.add_argument("--temporal_max_ratio", type=float, default=1.0,
                         help="Maximum crop ratio for temporal invariance")
+    parser.add_argument("--temporal_views", type=int, default=3,
+                        help="Number of temporal views for consistency")
+    parser.add_argument("--temporal_warp_min", type=float, default=0.7,
+                        help="Minimum time-warp scale")
+    parser.add_argument("--temporal_warp_max", type=float, default=1.3,
+                        help="Maximum time-warp scale")
+    parser.add_argument("--temporal_drop_ratio", type=float, default=0.1,
+                        help="Frame drop ratio for temporal invariance")
+    parser.add_argument("--temporal_use_warp", type=bool, default=True,
+                        help="Use time-warp augmentation in temporal invariance")
+    parser.add_argument("--temporal_use_drop", type=bool, default=True,
+                        help="Use frame-drop augmentation in temporal invariance")
+
+    # Cross-modal consistency settings
+    parser.add_argument("--use_cm_consistency", type=bool, default=True,
+                        help="Enable cross-modal consistency loss (hands/body vs full)")
+    parser.add_argument("--cm_weight", type=float, default=0.5,
+                        help="Weight for cross-modal consistency loss")
+    parser.add_argument("--cm_temp", type=float, default=2.0,
+                        help="Temperature for cross-modal consistency loss")
 
     # Checkpointing
     parser.add_argument("--save_checkpoints", type=bool, default=True,
@@ -247,7 +267,16 @@ def train(args):
             temporal_weight=args.temporal_weight,
             temporal_temp=args.temporal_temp,
             temporal_min_ratio=args.temporal_min_ratio,
-            temporal_max_ratio=args.temporal_max_ratio
+            temporal_max_ratio=args.temporal_max_ratio,
+            temporal_views=args.temporal_views,
+            temporal_warp_min=args.temporal_warp_min,
+            temporal_warp_max=args.temporal_warp_max,
+            temporal_drop_ratio=args.temporal_drop_ratio,
+            temporal_use_warp=args.temporal_use_warp,
+            temporal_use_drop=args.temporal_use_drop,
+            use_cm_consistency=args.use_cm_consistency,
+            cm_weight=args.cm_weight,
+            cm_temp=args.cm_temp
         )
         end_time = time.time()
         train_time = end_time - start_time
