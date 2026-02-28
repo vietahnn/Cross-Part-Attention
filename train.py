@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 from torchvision import transforms
 from torch.utils.data import DataLoader
+from torch.optim.swa_utils import AveragedModel, SWALR, update_bn
 from pathlib import Path
 
 from utils import __balance_val_split, __split_of_train_sequence, __log_class_statistics
@@ -57,6 +58,14 @@ def get_default_args():
     parser.add_argument("--lr", type=float, default=0.0001, help="Learning rate for the model training")
     parser.add_argument("--log_freq", type=int, default=1,
                         help="Log frequency (frequency of printing all the training info)")
+
+    # Stochastic Weight Averaging (SWA) settings
+    parser.add_argument("--use_swa", type=bool, default=True,
+                        help="Enable Stochastic Weight Averaging")
+    parser.add_argument("--swa_start", type=int, default=60,
+                        help="Epoch to start SWA averaging")
+    parser.add_argument("--swa_lr", type=float, default=0.00005,
+                        help="SWA learning rate")
 
     # Checkpointing
     parser.add_argument("--save_checkpoints", type=bool, default=True,
@@ -152,6 +161,8 @@ def train(args):
     cel_criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.AdamW(slr_model.parameters(), lr=args.lr, betas=(0.9, 0.999), weight_decay=1e-8)
     scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=[60, 80], gamma=0.1)  # 40, 60, 80
+    swa_model = AveragedModel(slr_model) if args.use_swa else None
+    swa_scheduler = SWALR(optimizer, swa_lr=args.swa_lr) if args.use_swa else None
 
     # Ensure that the path for checkpointing and for images both exist
     Path("out-checkpoints/" + args.experiment_name + "/").mkdir(parents=True, exist_ok=True)
@@ -223,8 +234,19 @@ def train(args):
     avg_train_time_sec_list = []
     for epoch in range(args.epochs):
         start_time = time.time()
-        train_loss, _, _, train_acc, avg_train_time = train_epoch(slr_model, train_loader, cel_criterion, optimizer,
-                                                                  device, scheduler=scheduler)
+        use_swa_phase = args.use_swa and (epoch >= args.swa_start)
+        current_scheduler = swa_scheduler if use_swa_phase else scheduler
+
+        train_loss, _, _, train_acc, avg_train_time = train_epoch(
+            slr_model,
+            train_loader,
+            cel_criterion,
+            optimizer,
+            device,
+            scheduler=current_scheduler
+        )
+        if use_swa_phase:
+            swa_model.update_parameters(slr_model)
         end_time = time.time()
         train_time = end_time - start_time
 
@@ -292,6 +314,10 @@ def train(args):
 
         logging.info(f"Total training time taken over {args.epochs} epochs: {str(datetime.timedelta(seconds=total_train_time))}")
         logging.info(f"Average training time per sample: {str(mean(avg_train_time_sec_list[1:]))}")
+
+    if args.use_swa:
+        update_bn(train_loader, swa_model, device=device)
+        slr_model = swa_model
 
     # MARK: TESTING
     print("\nTesting checkpointed models starting...\n")
