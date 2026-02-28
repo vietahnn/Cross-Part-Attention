@@ -10,7 +10,7 @@ import torch.optim as optim
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 from torchvision import transforms
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, WeightedRandomSampler
 from pathlib import Path
 
 from utils import __balance_val_split, __split_of_train_sequence, __log_class_statistics
@@ -57,6 +57,16 @@ def get_default_args():
     parser.add_argument("--lr", type=float, default=0.0001, help="Learning rate for the model training")
     parser.add_argument("--log_freq", type=int, default=1,
                         help="Log frequency (frequency of printing all the training info)")
+
+    # Curriculum + hard-negative mining settings
+    parser.add_argument("--use_curriculum", type=bool, default=True,
+                        help="Enable curriculum learning with hard-negative mining")
+    parser.add_argument("--curriculum_epochs", type=int, default=10,
+                        help="Number of epochs to ramp into hard-negative mining")
+    parser.add_argument("--hard_neg_topk", type=int, default=10,
+                        help="Number of hardest classes to boost")
+    parser.add_argument("--hard_neg_boost", type=float, default=1.5,
+                        help="Boost factor for hardest classes")
 
     # Checkpointing
     parser.add_argument("--save_checkpoints", type=bool, default=True,
@@ -193,8 +203,20 @@ def train(args):
     if args.experimental_train_split:
         train_set = __split_of_train_sequence(train_set, args.experimental_train_split)
 
-    train_loader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True, generator=g,
-                              num_workers=args.num_worker)
+    def build_sampler(dataset, class_weights):
+        sample_weights = [class_weights[int(lbl)] for lbl in dataset.targets]
+        return WeightedRandomSampler(sample_weights, num_samples=len(sample_weights), replacement=True)
+
+    class_weights = torch.ones(args.num_classes, dtype=torch.float32)
+    sampler = build_sampler(train_set, class_weights) if args.use_curriculum else None
+    train_loader = DataLoader(
+        train_set,
+        batch_size=args.batch_size,
+        shuffle=(sampler is None),
+        sampler=sampler,
+        generator=g,
+        num_workers=args.num_worker
+    )
 
     # MARK: TRAINING
     train_acc, val_acc = 0, 0
@@ -223,14 +245,50 @@ def train(args):
     avg_train_time_sec_list = []
     for epoch in range(args.epochs):
         start_time = time.time()
-        train_loss, _, _, train_acc, avg_train_time = train_epoch(slr_model, train_loader, cel_criterion, optimizer,
-                                                                  device, scheduler=scheduler)
+        train_loss, _, _, train_acc, avg_train_time, class_correct, class_total = train_epoch(
+            slr_model,
+            train_loader,
+            cel_criterion,
+            optimizer,
+            device,
+            scheduler=scheduler,
+            num_classes=args.num_classes
+        )
         end_time = time.time()
         train_time = end_time - start_time
 
         if args.record_training_time:
             avg_train_time_sec_list.append(avg_train_time)
             total_train_time += train_time
+
+        if args.use_curriculum:
+            with torch.no_grad():
+                class_acc = class_correct / (class_total + 1e-8)
+                hardness = (1.0 - class_acc).clamp(min=0.0)
+                if hardness.sum() > 0:
+                    hardness = hardness / hardness.sum()
+                else:
+                    hardness = torch.ones_like(hardness) / len(hardness)
+
+                progress = min(1.0, float(epoch + 1) / max(1, args.curriculum_epochs))
+                base = torch.ones_like(hardness) / len(hardness)
+                class_weights = (1.0 - progress) * base + progress * hardness
+
+                if args.hard_neg_topk > 0:
+                    topk = min(args.hard_neg_topk, len(class_weights))
+                    hard_idx = torch.topk(hardness, topk).indices
+                    class_weights[hard_idx] = class_weights[hard_idx] * args.hard_neg_boost
+                class_weights = class_weights / class_weights.sum()
+
+            sampler = build_sampler(train_set, class_weights)
+            train_loader = DataLoader(
+                train_set,
+                batch_size=args.batch_size,
+                shuffle=False,
+                sampler=sampler,
+                generator=g,
+                num_workers=args.num_worker
+            )
 
         if val_loader:
             slr_model.train(False)

@@ -8,8 +8,18 @@ import time
 from statistics import mean
 
 
-def train_epoch(model, dataloader, criterion, optimizer, device, scheduler=None):
+def train_epoch(
+    model,
+    dataloader,
+    criterion,
+    optimizer,
+    device,
+    scheduler=None,
+    num_classes=100
+):
     pred_correct, pred_all = 0, 0
+    class_correct = torch.zeros(num_classes, device=device)
+    class_total = torch.zeros(num_classes, device=device)
     running_loss = 0.0
     train_time_sec_list = []
     for i, data in enumerate(dataloader):
@@ -40,12 +50,18 @@ def train_epoch(model, dataloader, criterion, optimizer, device, scheduler=None)
         pred_correct += torch.sum(preds == labels.view(-1)).item()
         pred_all += labels.size(0)
 
+        labels_flat = labels.view(-1)
+        for cls in labels_flat.unique():
+            cls_mask = labels_flat == cls
+            class_total[int(cls)] += cls_mask.sum().item()
+            class_correct[int(cls)] += (preds[cls_mask] == labels_flat[cls_mask]).sum().item()
+
     if scheduler:
         scheduler.step()
 
     avg_train_time = mean(train_time_sec_list)
 
-    return running_loss, pred_correct, pred_all, (pred_correct / pred_all), avg_train_time
+    return running_loss, pred_correct, pred_all, (pred_correct / pred_all), avg_train_time, class_correct, class_total
 
 
 def evaluate(model, dataloader, device, print_stats=False):
