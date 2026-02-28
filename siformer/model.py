@@ -231,9 +231,14 @@ class SpoTer(nn.Module):
         custom_decoder_layer = DecoderLayer(self.transformer.d_model, self.transformer.nhead, 2048, 0.1, "relu")
         self.transformer.decoder.layers = _get_clones(custom_decoder_layer, self.transformer.decoder.num_layers)
         self.projection = nn.Linear(num_hid, num_classes)
+        self.aux_head = nn.Sequential(
+            nn.Linear(num_hid, num_hid),
+            nn.ReLU(),
+            nn.Linear(num_hid, 3)
+        )
         print(f"num_enc_layers {num_enc_layers}, num_dec_layers {num_dec_layers}")
 
-    def forward(self, l_hand, r_hand, body, training):
+    def forward(self, l_hand, r_hand, body, training, return_aux=False):
         batch_size = l_hand.size(0)
 
         inputs = torch.cat((l_hand, r_hand, body), -2)
@@ -243,7 +248,11 @@ class SpoTer(nn.Module):
         new_inputs = new_inputs.permute(1, 0, 2).type(dtype=torch.float32)
 
         transformer_out = self.transformer(new_inputs, self.class_query.repeat(1, batch_size, 1)).transpose(0, 1)
-        out = self.projection(transformer_out).squeeze()
+        seq_embedding = transformer_out.squeeze(1)
+        out = self.projection(seq_embedding).squeeze()
+        if return_aux:
+            aux_out = self.aux_head(seq_embedding)
+            return out, aux_out
         return out
 
 
@@ -269,8 +278,13 @@ class SiFormer(nn.Module):
         )
         print(f"num_enc_layers {num_enc_layers}, num_dec_layers {num_dec_layers}, patient {patience}, cross_attn {use_cross_attention}, direction {cross_attn_direction}")
         self.projection = nn.Linear(num_hid, num_classes)
+        self.aux_head = nn.Sequential(
+            nn.Linear(num_hid, num_hid),
+            nn.ReLU(),
+            nn.Linear(num_hid, 3)
+        )
 
-    def forward(self, l_hand, r_hand, body, training):
+    def forward(self, l_hand, r_hand, body, training, return_aux=False):
         batch_size = l_hand.size(0)
         # (batch_size, seq_len, respected_feature_size, coordinates): (24, 204, 54, 2)
         # -> (batch_size, seq_len, feature_size):  (24, 204, 108)
@@ -298,7 +312,11 @@ class SiFormer(nn.Module):
         # print(transformer_output.shape)
 
         # (batch_size, 1, feature_size) -> (batch_size, num_class): (24, 100)
-        out = self.projection(transformer_output).squeeze()
+        seq_embedding = transformer_output.squeeze(1)
+        out = self.projection(seq_embedding).squeeze()
+        if return_aux:
+            aux_out = self.aux_head(seq_embedding)
+            return out, aux_out
         return out
 
     @staticmethod

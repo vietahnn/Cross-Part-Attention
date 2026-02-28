@@ -8,7 +8,31 @@ import time
 from statistics import mean
 
 
-def train_epoch(model, dataloader, criterion, optimizer, device, scheduler=None):
+def compute_motion_targets(l_hands, r_hands, bodies):
+    # Targets: average motion magnitude for left hand, right hand, and body
+    with torch.no_grad():
+        l_delta = l_hands[:, 1:] - l_hands[:, :-1]
+        r_delta = r_hands[:, 1:] - r_hands[:, :-1]
+        b_delta = bodies[:, 1:] - bodies[:, :-1]
+
+        l_mag = torch.sqrt((l_delta ** 2).sum(dim=-1) + 1e-8).mean(dim=(1, 2))
+        r_mag = torch.sqrt((r_delta ** 2).sum(dim=-1) + 1e-8).mean(dim=(1, 2))
+        b_mag = torch.sqrt((b_delta ** 2).sum(dim=-1) + 1e-8).mean(dim=(1, 2))
+
+        targets = torch.stack([l_mag, r_mag, b_mag], dim=1)
+    return targets
+
+
+def train_epoch(
+    model,
+    dataloader,
+    criterion,
+    optimizer,
+    device,
+    scheduler=None,
+    use_multi_task=True,
+    aux_weight=0.2
+):
     pred_correct, pred_all = 0, 0
     running_loss = 0.0
     train_time_sec_list = []
@@ -22,13 +46,22 @@ def train_epoch(model, dataloader, criterion, optimizer, device, scheduler=None)
         optimizer.zero_grad()
         start_time = time.time()
 
-        outputs = model(l_hands, r_hands, bodies, training=True)
+        if use_multi_task:
+            outputs, aux_outputs = model(l_hands, r_hands, bodies, training=True, return_aux=True)
+        else:
+            outputs = model(l_hands, r_hands, bodies, training=True)
 
         end_time = time.time()
         train_time_sec = end_time - start_time
         train_time_sec_list.append(train_time_sec)
 
-        loss = criterion(outputs, labels.squeeze(1))
+        ce_loss = criterion(outputs, labels.squeeze(1))
+        if use_multi_task:
+            aux_targets = compute_motion_targets(l_hands, r_hands, bodies).to(device)
+            aux_loss = F.smooth_l1_loss(aux_outputs, aux_targets)
+            loss = ce_loss + (aux_weight * aux_loss)
+        else:
+            loss = ce_loss
         loss.backward()
         optimizer.step()
         running_loss += loss
