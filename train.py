@@ -4,6 +4,7 @@ import argparse
 import random
 import logging
 import torch
+from torch.cuda.amp import GradScaler
 
 import numpy as np
 import torch.nn as nn
@@ -70,7 +71,7 @@ def get_default_args():
                         help="Minimum crop ratio for temporal invariance")
     parser.add_argument("--temporal_max_ratio", type=float, default=1.0,
                         help="Maximum crop ratio for temporal invariance")
-    parser.add_argument("--temporal_views", type=int, default=3,
+    parser.add_argument("--temporal_views", type=int, default=2,
                         help="Number of temporal views for consistency")
     parser.add_argument("--temporal_warp_min", type=float, default=0.7,
                         help="Minimum time-warp scale")
@@ -78,10 +79,14 @@ def get_default_args():
                         help="Maximum time-warp scale")
     parser.add_argument("--temporal_drop_ratio", type=float, default=0.1,
                         help="Frame drop ratio for temporal invariance")
-    parser.add_argument("--temporal_use_warp", type=bool, default=True,
+    parser.add_argument("--temporal_use_warp", type=bool, default=False,
                         help="Use time-warp augmentation in temporal invariance")
     parser.add_argument("--temporal_use_drop", type=bool, default=True,
                         help="Use frame-drop augmentation in temporal invariance")
+
+    # AMP (mixed precision)
+    parser.add_argument("--use_amp", type=bool, default=True,
+                        help="Enable mixed precision to reduce memory usage")
 
     # Checkpointing
     parser.add_argument("--save_checkpoints", type=bool, default=True,
@@ -177,6 +182,8 @@ def train(args):
     cel_criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.AdamW(slr_model.parameters(), lr=args.lr, betas=(0.9, 0.999), weight_decay=1e-8)
     scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=[60, 80], gamma=0.1)  # 40, 60, 80
+    use_amp = args.use_amp and device.type == "cuda"
+    scaler = GradScaler(enabled=use_amp)
 
     # Ensure that the path for checkpointing and for images both exist
     Path("out-checkpoints/" + args.experiment_name + "/").mkdir(parents=True, exist_ok=True)
@@ -265,7 +272,9 @@ def train(args):
             temporal_warp_max=args.temporal_warp_max,
             temporal_drop_ratio=args.temporal_drop_ratio,
             temporal_use_warp=args.temporal_use_warp,
-            temporal_use_drop=args.temporal_use_drop
+            temporal_use_drop=args.temporal_use_drop,
+            use_amp=use_amp,
+            scaler=scaler
         )
         end_time = time.time()
         train_time = end_time - start_time

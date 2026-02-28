@@ -6,6 +6,7 @@ import torch
 import torch.nn.functional as F
 import time
 from statistics import mean
+from torch.cuda.amp import autocast
 
 
 def temporal_crop_and_resize(x, min_ratio=0.7, max_ratio=1.0):
@@ -92,7 +93,9 @@ def train_epoch(
     temporal_warp_max=1.3,
     temporal_drop_ratio=0.1,
     temporal_use_warp=True,
-    temporal_use_drop=True
+    temporal_use_drop=True,
+    use_amp=False,
+    scaler=None
 ):
     pred_correct, pred_all = 0, 0
     running_loss = 0.0
@@ -107,93 +110,94 @@ def train_epoch(
         optimizer.zero_grad()
         start_time = time.time()
 
-        outputs = model(l_hands, r_hands, bodies, training=True)
-        temporal_loss = None
-        if use_temporal_invariance:
-            mid_ratio = (temporal_min_ratio + temporal_max_ratio) / 2.0
-            views = []
+        with autocast(enabled=use_amp):
+            outputs = model(l_hands, r_hands, bodies, training=True)
+            temporal_loss = None
+            if use_temporal_invariance:
+                mid_ratio = (temporal_min_ratio + temporal_max_ratio) / 2.0
+                views = []
 
-            if temporal_views >= 1:
-                l_view = temporal_augment_view(
-                    l_hands,
-                    min_ratio=temporal_min_ratio,
-                    max_ratio=mid_ratio,
-                    warp_min=temporal_warp_min,
-                    warp_max=temporal_warp_max,
-                    drop_ratio=temporal_drop_ratio,
-                    use_warp=temporal_use_warp,
-                    use_drop=temporal_use_drop
-                )
-                r_view = temporal_augment_view(
-                    r_hands,
-                    min_ratio=temporal_min_ratio,
-                    max_ratio=mid_ratio,
-                    warp_min=temporal_warp_min,
-                    warp_max=temporal_warp_max,
-                    drop_ratio=temporal_drop_ratio,
-                    use_warp=temporal_use_warp,
-                    use_drop=temporal_use_drop
-                )
-                b_view = temporal_augment_view(
-                    bodies,
-                    min_ratio=temporal_min_ratio,
-                    max_ratio=mid_ratio,
-                    warp_min=temporal_warp_min,
-                    warp_max=temporal_warp_max,
-                    drop_ratio=temporal_drop_ratio,
-                    use_warp=temporal_use_warp,
-                    use_drop=temporal_use_drop
-                )
-                views.append(model(l_view, r_view, b_view, training=True))
+                if temporal_views >= 1:
+                    l_view = temporal_augment_view(
+                        l_hands,
+                        min_ratio=temporal_min_ratio,
+                        max_ratio=mid_ratio,
+                        warp_min=temporal_warp_min,
+                        warp_max=temporal_warp_max,
+                        drop_ratio=temporal_drop_ratio,
+                        use_warp=temporal_use_warp,
+                        use_drop=temporal_use_drop
+                    )
+                    r_view = temporal_augment_view(
+                        r_hands,
+                        min_ratio=temporal_min_ratio,
+                        max_ratio=mid_ratio,
+                        warp_min=temporal_warp_min,
+                        warp_max=temporal_warp_max,
+                        drop_ratio=temporal_drop_ratio,
+                        use_warp=temporal_use_warp,
+                        use_drop=temporal_use_drop
+                    )
+                    b_view = temporal_augment_view(
+                        bodies,
+                        min_ratio=temporal_min_ratio,
+                        max_ratio=mid_ratio,
+                        warp_min=temporal_warp_min,
+                        warp_max=temporal_warp_max,
+                        drop_ratio=temporal_drop_ratio,
+                        use_warp=temporal_use_warp,
+                        use_drop=temporal_use_drop
+                    )
+                    views.append(model(l_view, r_view, b_view, training=True))
 
-            if temporal_views >= 2:
-                l_view = temporal_augment_view(
-                    l_hands,
-                    min_ratio=mid_ratio,
-                    max_ratio=temporal_max_ratio,
-                    warp_min=temporal_warp_min,
-                    warp_max=temporal_warp_max,
-                    drop_ratio=temporal_drop_ratio,
-                    use_warp=temporal_use_warp,
-                    use_drop=temporal_use_drop
-                )
-                r_view = temporal_augment_view(
-                    r_hands,
-                    min_ratio=mid_ratio,
-                    max_ratio=temporal_max_ratio,
-                    warp_min=temporal_warp_min,
-                    warp_max=temporal_warp_max,
-                    drop_ratio=temporal_drop_ratio,
-                    use_warp=temporal_use_warp,
-                    use_drop=temporal_use_drop
-                )
-                b_view = temporal_augment_view(
-                    bodies,
-                    min_ratio=mid_ratio,
-                    max_ratio=temporal_max_ratio,
-                    warp_min=temporal_warp_min,
-                    warp_max=temporal_warp_max,
-                    drop_ratio=temporal_drop_ratio,
-                    use_warp=temporal_use_warp,
-                    use_drop=temporal_use_drop
-                )
-                views.append(model(l_view, r_view, b_view, training=True))
+                if temporal_views >= 2:
+                    l_view = temporal_augment_view(
+                        l_hands,
+                        min_ratio=mid_ratio,
+                        max_ratio=temporal_max_ratio,
+                        warp_min=temporal_warp_min,
+                        warp_max=temporal_warp_max,
+                        drop_ratio=temporal_drop_ratio,
+                        use_warp=temporal_use_warp,
+                        use_drop=temporal_use_drop
+                    )
+                    r_view = temporal_augment_view(
+                        r_hands,
+                        min_ratio=mid_ratio,
+                        max_ratio=temporal_max_ratio,
+                        warp_min=temporal_warp_min,
+                        warp_max=temporal_warp_max,
+                        drop_ratio=temporal_drop_ratio,
+                        use_warp=temporal_use_warp,
+                        use_drop=temporal_use_drop
+                    )
+                    b_view = temporal_augment_view(
+                        bodies,
+                        min_ratio=mid_ratio,
+                        max_ratio=temporal_max_ratio,
+                        warp_min=temporal_warp_min,
+                        warp_max=temporal_warp_max,
+                        drop_ratio=temporal_drop_ratio,
+                        use_warp=temporal_use_warp,
+                        use_drop=temporal_use_drop
+                    )
+                    views.append(model(l_view, r_view, b_view, training=True))
 
-            if temporal_views >= 3:
-                views.append(model(l_hands, r_hands, bodies, training=True))
+                if temporal_views >= 3:
+                    views.append(model(l_hands, r_hands, bodies, training=True))
 
-            if len(views) > 1:
-                pair_loss = 0.0
-                pair_count = 0
-                for i_idx in range(len(views)):
-                    for j_idx in range(i_idx + 1, len(views)):
-                        pair_loss = pair_loss + temporal_invariance_loss(
-                            views[i_idx],
-                            views[j_idx],
-                            temperature=temporal_temp
-                        )
-                        pair_count += 1
-                temporal_loss = pair_loss / max(1, pair_count)
+                if len(views) > 1:
+                    pair_loss = 0.0
+                    pair_count = 0
+                    for i_idx in range(len(views)):
+                        for j_idx in range(i_idx + 1, len(views)):
+                            pair_loss = pair_loss + temporal_invariance_loss(
+                                views[i_idx],
+                                views[j_idx],
+                                temperature=temporal_temp
+                            )
+                            pair_count += 1
+                    temporal_loss = pair_loss / max(1, pair_count)
 
         end_time = time.time()
         train_time_sec = end_time - start_time
@@ -204,8 +208,14 @@ def train_epoch(
             loss = ce_loss + (temporal_weight * temporal_loss)
         else:
             loss = ce_loss
-        loss.backward()
-        optimizer.step()
+
+        if use_amp and scaler is not None:
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            loss.backward()
+            optimizer.step()
         running_loss += loss
 
         # Statistics
