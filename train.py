@@ -71,7 +71,7 @@ def get_default_args():
                         help="Minimum crop ratio for temporal invariance")
     parser.add_argument("--temporal_max_ratio", type=float, default=1.0,
                         help="Maximum crop ratio for temporal invariance")
-    parser.add_argument("--temporal_views", type=int, default=2,
+    parser.add_argument("--temporal_views", type=int, default=3,
                         help="Number of temporal views for consistency")
     parser.add_argument("--temporal_warp_min", type=float, default=0.7,
                         help="Minimum time-warp scale")
@@ -79,7 +79,7 @@ def get_default_args():
                         help="Maximum time-warp scale")
     parser.add_argument("--temporal_drop_ratio", type=float, default=0.1,
                         help="Frame drop ratio for temporal invariance")
-    parser.add_argument("--temporal_use_warp", type=bool, default=False,
+    parser.add_argument("--temporal_use_warp", type=bool, default=True,
                         help="Use time-warp augmentation in temporal invariance")
     parser.add_argument("--temporal_use_drop", type=bool, default=True,
                         help="Use frame-drop augmentation in temporal invariance")
